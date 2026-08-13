@@ -350,7 +350,7 @@ MARATHON_GAP_SECONDS = 60 * 60
 # good the individual exchanges were. The floor keeps trivial threads unscored.
 CHEM_MIN_TOTAL = 50    # at least this many messages exchanged...
 CHEM_MIN_SIDE = 10     # ...and both people said at least this much
-CHEM_TARGET_WEEKS = 20 # distinct active weeks for full "consistency" credit
+CHEM_TARGET_WEEKS = 8  # distinct active weeks for full "consistency" credit
 CHEM_SUSTAIN_FLOOR = 0.40  # a perfect but non-sustained chat still keeps this share
 CHEM_RECENCY_HALF_DAYS = 180  # days since last message for recency to hit 0.5
 CHEM_RECENCY_FLOOR = 0.35     # a great-but-dormant chat still keeps this share
