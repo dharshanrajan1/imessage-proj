@@ -76,6 +76,18 @@
           </div>
           <div class="award-grid" id="globalRecordsGrid"></div>
 
+          <div class="section-heading">
+            <h2>🧪 Chemistry — How You Mesh, Ranked</h2>
+            <p class="section-subtitle">Every one-on-one chat gets a 0–100 score based on <em>mutual</em> effort, <em>consistency over time</em>, and <em>how recently</em> you've talked: balanced back-and-forth, fast replies both ways, shared conversation-starting, reactions/laughs you trade — plus how steadily and how recently you keep in touch, so neither a single old burst nor a friendship you've drifted from outranks the people you actually click with now. Ranked best to worst.</p>
+          </div>
+          <div class="chemistry-grid" id="chemistryGrid"></div>
+
+          <div class="section-heading">
+            <h2>💬 DM Superlatives</h2>
+            <p class="section-subtitle">Awards handed out across all your one-on-one conversations.</p>
+          </div>
+          <div class="award-grid" id="dmAwardsGrid"></div>
+
           <div class="metrics-grid">
             <div class="metric-card glass-card">
               <h3>Total Messages</h3>
@@ -97,12 +109,16 @@
           
           <div class="charts-grid">
             <div class="chart-card glass-card span-2">
-              <h3>Hourly Activity</h3>
-              <canvas id="globalHourlyChart"></canvas>
+              <h3>Messages Over Time</h3>
+              <canvas id="globalMonthlyChart"></canvas>
             </div>
             <div class="chart-card glass-card">
               <h3>Day of Week</h3>
               <canvas id="globalDailyChart"></canvas>
+            </div>
+            <div class="chart-card glass-card span-2">
+              <h3>Hourly Activity</h3>
+              <canvas id="globalHourlyChart"></canvas>
             </div>
             <div class="chart-card glass-card">
               <h3>Reactions</h3>
@@ -130,6 +146,10 @@
               <p id="chatTotalMsg" class="metric-value">0</p>
             </div>
             <div class="metric-card glass-card">
+              <h3>Chemistry</h3>
+              <p id="chatChemistry" class="metric-value">—</p>
+            </div>
+            <div class="metric-card glass-card">
               <h3>LPM (Me/Them)</h3>
               <p id="chatLpm" class="metric-value">0 / 0</p>
             </div>
@@ -138,10 +158,20 @@
               <p id="chatDoubleTexts" class="metric-value">0 / 0</p>
             </div>
             <div class="metric-card glass-card">
-              <h3>Avg Response (Me/Them)</h3>
+              <h3>Typical Reply (Me/Them)</h3>
               <p id="chatResponse" class="metric-value">0 / 0</p>
             </div>
+            <div class="metric-card glass-card">
+              <h3>Words/Msg (Me/Them)</h3>
+              <p id="chatWords" class="metric-value">0 / 0</p>
+            </div>
+            <div class="metric-card glass-card">
+              <h3>Media (Me/Them)</h3>
+              <p id="chatMedia" class="metric-value">0 / 0</p>
+            </div>
           </div>
+
+          <div class="award-grid" id="chatRecordsGrid"></div>
 
           <div class="charts-grid">
             <div class="chart-card glass-card span-2">
@@ -151,6 +181,10 @@
             <div class="chart-card glass-card">
               <h3>Conversational Balance</h3>
               <canvas id="chatBalanceChart"></canvas>
+            </div>
+            <div class="chart-card glass-card span-2">
+              <h3>Hourly Activity</h3>
+              <canvas id="chatHourlyChart"></canvas>
             </div>
             <div class="chart-card glass-card">
               <h3>Initiations</h3>
@@ -174,7 +208,7 @@
               <table class="leaderboard-table" id="leaderboardTable">
                 <thead>
                   <tr>
-                    <th data-sort="rank">Rank</th>
+                    <th>Rank</th>
                     <th data-sort="handle">Member</th>
                     <th data-sort="message_count">Messages</th>
                     <th data-sort="message_share_pct">Share %</th>

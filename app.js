@@ -23,7 +23,55 @@ const TERM_BLURBS = {
   ghost: 'Talks the least relative to their "fair share" of the conversation.',
   night_owl: 'Highest share of messages sent between 10pm and 4am.',
   conv_starter: 'Highest share of conversations kicked off after an 8+ hour lull.',
+  best_friend: 'Your most-messaged one-on-one chat.',
+  fastest_replier: 'Shortest typical (median) time to reply to you.',
+  slowest_replier: 'Longest typical (median) time to reply to you.',
+  makes_you_laugh: 'The DM where you send the most "haha/lol" per message.',
+  your_biggest_fan: 'Laughs at your messages more than anyone else.',
+  you_chase: 'You start the biggest share of conversations in this DM.',
+  chases_you: 'They start the biggest share of conversations with you.',
+  most_balanced: 'Closest to a perfect 50/50 message split (100+ msgs).',
+  longest_day_streak: 'Most consecutive days exchanging at least one message.',
+  day_streak: 'Longest run of consecutive days with at least one message in this chat.',
+  shutterbug: 'Sends you the most photos, videos, and files.',
+  paparazzi: 'Sent the most photos, videos, and files in this chat.',
+  busiest_day: 'The single calendar day with the most messages across all chats.',
+  chat_busiest_day: 'The single day with the most messages in this chat.',
+  longest_message: 'The longest single message anyone ever sent, by character count.',
 };
+
+// How each DM Superlative is titled and formatted; keys match records.dm_awards.
+const DM_AWARD_DEFS = {
+  best_friend: { title: '👑 Best Friend', stat: a => `${a.total.toLocaleString()} msgs` },
+  fastest_replier: { title: '⚡ Fastest Replier', stat: a => `${formatTime(a.avg_mins)} typical reply` },
+  slowest_replier: { title: '🐢 Leaves You on Read', stat: a => `${formatTime(a.avg_mins)} typical reply` },
+  makes_you_laugh: { title: '😂 Makes You Laugh', stat: a => `you laugh in ${(a.lpm * 100).toFixed(0)}% of your msgs` },
+  your_biggest_fan: { title: '🎉 Your Biggest Fan', stat: a => `laughs in ${(a.lpm * 100).toFixed(0)}% of their msgs` },
+  you_chase: { title: '🏃 You Chase Them', stat: a => `you start ${a.pct}% of convos` },
+  chases_you: { title: '🧲 They Chase You', stat: a => `they start ${a.pct}% of convos` },
+  most_balanced: { title: '⚖️ Perfectly Balanced', stat: a => `${a.sent.toLocaleString()} / ${a.received.toLocaleString()} split` },
+  longest_day_streak: { title: '🔥 Longest Streak', stat: a => `${a.days} days in a row` },
+  shutterbug: { title: '📸 Shutterbug', stat: a => `${a.count.toLocaleString()} media sent to you` },
+};
+
+// Friendly labels for the chemistry sub-scores, in display order.
+const CHEM_LABELS = {
+  recency: 'Recency',
+  consistency: 'Consistency',
+  balance: 'Balance',
+  responsiveness: 'Reply speed',
+  reciprocity: 'Reciprocity',
+  humor: 'Humor',
+  affection: 'Reactions',
+};
+
+function esc(s) {
+  return String(s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+}
+
+function displayName(n) {
+  return n === 'me' ? 'You' : n;
+}
 Chart.defaults.color = '#94a3b8';
 Chart.defaults.font.family = "'Outfit', sans-serif";
 
@@ -37,6 +85,10 @@ document.addEventListener('DOMContentLoaded', () => {
 
 async function fetchData(startDate, endDate) {
   try {
+    // Re-show the spinner on refetches (date-range changes can take a few seconds).
+    document.getElementById('statsDashboard').classList.add('hidden');
+    document.getElementById('loadingState').classList.remove('hidden');
+
     const params = new URLSearchParams();
     if (startDate) params.set('start_date', startDate);
     if (endDate) params.set('end_date', endDate);
@@ -63,6 +115,7 @@ async function fetchData(startDate, endDate) {
       state.activeChat = null;
     }
   } catch (error) {
+    console.error('iMessage Wrapped failed to load:', error);
     document.getElementById('loadingState').innerHTML = `<p style="color:#ef4444">Error loading data: ${error.message}</p>`;
   }
 }
@@ -169,17 +222,27 @@ function setupNavigation() {
   });
 }
 
-function setupSearch() {
-  const input = document.getElementById('chatSearch');
-  input.addEventListener('input', (e) => {
-    const term = e.target.value.toLowerCase();
-    const items = document.querySelectorAll('.chat-item');
-    items.forEach(item => {
-      const name = item.querySelector('.chat-name').textContent.toLowerCase();
-      if (name.includes(term)) item.style.display = 'flex';
-      else item.style.display = 'none';
-    });
+function applySearchFilter() {
+  const term = document.getElementById('chatSearch').value.toLowerCase();
+  document.querySelectorAll('.chat-item').forEach(item => {
+    const name = item.querySelector('.chat-name').textContent.toLowerCase();
+    item.style.display = name.includes(term) ? 'flex' : 'none';
   });
+}
+
+function setupSearch() {
+  document.getElementById('chatSearch').addEventListener('input', applySearchFilter);
+}
+
+function relTime(iso) {
+  if (!iso) return '';
+  const t = new Date(iso).getTime();
+  if (isNaN(t)) return '';
+  const days = (Date.now() - t) / 86400000;
+  if (days < 1) return 'today';
+  if (days < 30) return Math.floor(days) + 'd ago';
+  if (days < 365) return Math.floor(days / 30.44) + 'mo ago';
+  return Math.floor(days / 365.25) + 'y ago';
 }
 
 function formatTime(mins) {
@@ -227,7 +290,7 @@ function renderSidebar() {
       
       const count = document.createElement('span');
       count.className = 'chat-count';
-      count.textContent = chat.total_messages.toLocaleString() + ' msgs';
+      count.textContent = `${chat.total_messages.toLocaleString()} msgs · ${relTime(chat.last_message_date)}`;
       
       item.appendChild(row);
       item.appendChild(count);
@@ -242,6 +305,9 @@ function renderSidebar() {
   
   addSection('Direct Messages', dms);
   addSection('Group Chats', gcs);
+
+  // Keep any active search term applied across re-renders (filter/date changes).
+  applySearchFilter();
 }
 
 function selectChat(chatId) {
@@ -249,9 +315,12 @@ function selectChat(chatId) {
   if (!chat) return;
   state.activeChat = chat;
   
-  document.querySelectorAll('.chat-item').forEach(i => i.classList.remove('active'));
-  const activeItem = document.querySelector(`.chat-item[data-id="${chatId}"]`);
-  if (activeItem) activeItem.classList.add('active');
+  // Compare dataset values directly rather than building a selector string --
+  // chat identifiers can contain characters (quotes, etc.) that make an
+  // attribute selector invalid and throw.
+  document.querySelectorAll('.chat-item').forEach(i => {
+    i.classList.toggle('active', i.dataset.id === chatId);
+  });
   
   renderChatDetails(chat);
   
@@ -276,6 +345,28 @@ function renderGlobalOverview() {
   document.getElementById('globalRecvMsg').textContent = stats.received.toLocaleString();
   const ratio = stats.total_messages ? Math.round((stats.sent / stats.total_messages) * 100) : 0;
   document.getElementById('globalSentRatio').textContent = ratio + '%';
+
+  // Messages Over Time
+  destroyChart('globalMonthlyChart');
+  if (stats.monthly_activity) {
+    const monthly = fillMonthlyGaps(stats.monthly_activity);
+    state.charts['globalMonthlyChart'] = new Chart(document.getElementById('globalMonthlyChart'), {
+      type: 'line',
+      data: {
+        labels: monthly.labels,
+        datasets: [{
+          label: 'Messages',
+          data: monthly.values,
+          borderColor: '#ec4899',
+          backgroundColor: 'rgba(236, 72, 153, 0.1)',
+          fill: true,
+          tension: 0.3,
+          pointRadius: 0
+        }]
+      },
+      options: { responsive: true, maintainAspectRatio: false }
+    });
+  }
 
   // Hourly
   destroyChart('globalHourlyChart');
@@ -312,12 +403,15 @@ function renderGlobalOverview() {
     options: { responsive: true, maintainAspectRatio: false }
   });
 
-  // Reactions Radar
+  // Reactions Radar -- build one label set from the union of both dicts so
+  // sent/received values stay aligned to the right axis labels.
   destroyChart('globalReactionsChart');
-  const rLabels = Object.keys(stats.reactions_sent || {});
-  const rSent = Object.values(stats.reactions_sent || {});
-  const rRecv = Object.values(stats.reactions_received || {});
-  
+  const sentMap = stats.reactions_sent || {};
+  const recvMap = stats.reactions_received || {};
+  const rLabels = [...new Set([...Object.keys(sentMap), ...Object.keys(recvMap)])];
+  const rSent = rLabels.map(k => sentMap[k] || 0);
+  const rRecv = rLabels.map(k => recvMap[k] || 0);
+
   if (rLabels.length > 0) {
     state.charts['globalReactionsChart'] = new Chart(document.getElementById('globalReactionsChart'), {
       type: 'radar',
@@ -340,6 +434,63 @@ function renderGlobalOverview() {
   divEmojis.innerHTML = (stats.top_emojis || []).map(e => `<div class="emoji-item"><span>${e[0]}</span><span class="emoji-count">${e[1]}</span></div>`).join('');
 
   renderGlobalRecords();
+  renderChemistry();
+  renderDmAwards();
+}
+
+function renderChemistry() {
+  const grid = document.getElementById('chemistryGrid');
+  const matches = (state.data && state.data.records && state.data.records.chemistry) || [];
+  if (!matches.length) {
+    grid.innerHTML = `<p style="color:var(--text-secondary)">Not enough two-way DM activity in this range to score chemistry yet (needs ~20+ messages with both people participating).</p>`;
+    return;
+  }
+  const medals = ['🥇', '🥈', '🥉'];
+  grid.innerHTML = matches.map((mch, i) => {
+    const bars = Object.keys(CHEM_LABELS).map(k => {
+      const v = mch.breakdown[k] || 0;
+      return `
+        <div class="chem-bar-row">
+          <span class="chem-bar-label">${CHEM_LABELS[k]}</span>
+          <span class="chem-bar-track"><span class="chem-bar-fill" style="width:${Math.round(v * 100)}%"></span></span>
+        </div>`;
+    }).join('');
+    return `
+      <div class="chem-card">
+        <div class="chem-card-top">
+          <span class="chem-rank">${medals[i] || '#' + (i + 1)}</span>
+          <div class="chem-id">
+            <span class="chem-name">${esc(mch.name)}</span>
+            <span class="chem-highlight">${mch.highlight}</span>
+          </div>
+          <div class="chem-score">
+            <span class="chem-score-num">${mch.score}</span>
+            <span class="chem-score-label">/ 100</span>
+          </div>
+        </div>
+        <div class="chem-bars">${bars}</div>
+      </div>`;
+  }).join('');
+}
+
+function renderDmAwards() {
+  const grid = document.getElementById('dmAwardsGrid');
+  const awards = (state.data && state.data.records && state.data.records.dm_awards) || {};
+  const cards = Object.entries(DM_AWARD_DEFS)
+    .filter(([key]) => awards[key])
+    .map(([key, def]) => {
+      const a = awards[key];
+      return `
+        <div class="award-card">
+          <span class="award-title">${def.title}</span>
+          <span class="award-handle">${esc(a.name)}</span>
+          <span class="award-stat">${def.stat(a)}</span>
+          <p class="award-blurb">${TERM_BLURBS[key] || ''}</p>
+        </div>`;
+    });
+  grid.innerHTML = cards.length
+    ? cards.join('')
+    : `<p style="color:var(--text-secondary)">Not enough DM activity in this range to hand out awards.</p>`;
 }
 
 function renderGlobalRecords() {
@@ -350,7 +501,7 @@ function renderGlobalRecords() {
   const m = records.marathon_chat;
   if (m) {
     cards.push({
-      title: 'Marathon Chat', handle: m.chat,
+      title: 'Marathon Chat', handle: esc(m.chat),
       stat: `${m.message_count} msgs in ${m.duration_hours < 1 ? Math.round(m.duration_hours * 60) + 'm' : m.duration_hours.toFixed(1) + 'h'}`,
       blurb: TERM_BLURBS.marathon_chat
     });
@@ -359,7 +510,7 @@ function renderGlobalRecords() {
   const g = records.ghosting;
   if (g) {
     cards.push({
-      title: 'Ghosting', handle: `${g.ghoster} kept ${g.asker} waiting`,
+      title: 'Ghosting', handle: `${esc(displayName(g.ghoster))} kept ${esc(displayName(g.asker))} waiting`,
       stat: formatTime(g.delay_hours * 60),
       blurb: TERM_BLURBS.ghosting
     });
@@ -368,7 +519,7 @@ function renderGlobalRecords() {
   const o = records.most_one_sided_chat;
   if (o) {
     cards.push({
-      title: 'The Monologue', handle: o.chat,
+      title: 'The Monologue', handle: esc(o.chat),
       stat: `${o.dominant === 'me' ? 'You' : 'They'} sent ${Math.round(o.skew * 50 + 50)}% of it`,
       blurb: TERM_BLURBS.most_one_sided_chat
     });
@@ -386,9 +537,27 @@ function renderGlobalRecords() {
   const d = records.chronic_double_texter;
   if (d) {
     cards.push({
-      title: 'Chronic Double Texter', handle: d.handle,
+      title: 'Chronic Double Texter', handle: esc(displayName(d.handle)),
       stat: `${d.count} double texts`,
       blurb: TERM_BLURBS.chronic_double_texter
+    });
+  }
+
+  const b = records.busiest_day;
+  if (b) {
+    cards.push({
+      title: 'Busiest Day Ever', handle: b.date,
+      stat: `${b.count.toLocaleString()} msgs in one day`,
+      blurb: TERM_BLURBS.busiest_day
+    });
+  }
+
+  const lm = records.longest_message;
+  if (lm) {
+    cards.push({
+      title: 'Longest Message', handle: `${esc(displayName(lm.sender))}${lm.chat ? ' in ' + esc(lm.chat) : ''}`,
+      stat: `${lm.chars.toLocaleString()} characters`,
+      blurb: `"${esc(lm.preview)}${lm.chars > lm.preview.length ? '…' : ''}"`
     });
   }
 
@@ -409,25 +578,71 @@ function renderGlobalRecords() {
 
 function renderChatDetails(chat) {
   document.getElementById('chatName').textContent = chat.display_name || chat.chat_identifier;
-  document.getElementById('chatIdentifier').textContent = chat.chat_identifier;
+  // For unnamed group chats the raw "chat9847..." identifier is noise; show the
+  // participant count instead. DMs still show the phone/email handle.
+  const context = [];
+  if (chat.is_group_chat) {
+    if (chat.members && chat.members.length) context.push(`${chat.members.length} people`);
+  } else {
+    context.push(chat.chat_identifier);
+  }
+  if (chat.first_message_date) context.push(`texting since ${chat.first_message_date}`);
+  if (chat.active_day_count) context.push(`${chat.active_day_count.toLocaleString()} active days`);
+  document.getElementById('chatIdentifier').textContent = context.join(' · ');
 
   document.getElementById('chatTotalMsg').textContent = chat.total_messages.toLocaleString();
   document.getElementById('chatLpm').textContent = `${(chat.lpm_sent || 0).toFixed(2)} / ${(chat.lpm_recv || 0).toFixed(2)}`;
   document.getElementById('chatDoubleTexts').textContent = `${chat.double_texts_sent || 0} / ${chat.double_texts_received || 0}`;
-  document.getElementById('chatResponse').textContent = `${formatTime(chat.avg_response_time_sent_mins)} / ${formatTime(chat.avg_response_time_received_mins)}`;
+  document.getElementById('chatResponse').textContent = `${formatTime(chat.median_response_time_sent_mins)} / ${formatTime(chat.median_response_time_received_mins)}`;
+  document.getElementById('chatWords').textContent = `${(chat.avg_words_sent || 0).toFixed(1)} / ${(chat.avg_words_recv || 0).toFixed(1)}`;
+  document.getElementById('chatMedia').textContent = `${(chat.media_sent || 0).toLocaleString()} / ${(chat.media_received || 0).toLocaleString()}`;
 
-  // Monthly
+  const chemEl = document.getElementById('chatChemistry');
+  if (chat.chemistry) {
+    chemEl.textContent = chat.chemistry.score;
+    chemEl.title = chat.chemistry.highlight || '';
+  } else {
+    chemEl.textContent = '—';
+    chemEl.title = chat.is_group_chat ? 'Chemistry is scored for 1-on-1 chats only' : 'Not enough two-way activity to score';
+  }
+
+  renderChatRecords(chat);
+
+  // Monthly -- fill skipped months with 0 so the line doesn't jump across gaps.
   destroyChart('chatMonthlyChart');
   if (chat.monthly_activity) {
+    const monthly = fillMonthlyGaps(chat.monthly_activity);
     state.charts['chatMonthlyChart'] = new Chart(document.getElementById('chatMonthlyChart'), {
       type: 'line',
       data: {
-        labels: Object.keys(chat.monthly_activity),
+        labels: monthly.labels,
         datasets: [{
           label: 'Activity',
-          data: Object.values(chat.monthly_activity),
+          data: monthly.values,
           borderColor: '#10b981',
+          backgroundColor: 'rgba(16, 185, 129, 0.1)',
+          fill: true,
           tension: 0.3
+        }]
+      },
+      options: { responsive: true, maintainAspectRatio: false }
+    });
+  }
+
+  // Hourly
+  destroyChart('chatHourlyChart');
+  if (chat.hourly_distribution) {
+    state.charts['chatHourlyChart'] = new Chart(document.getElementById('chatHourlyChart'), {
+      type: 'line',
+      data: {
+        labels: Array.from({length: 24}, (_, i) => `${i}:00`),
+        datasets: [{
+          label: 'Messages',
+          data: chat.hourly_distribution,
+          borderColor: '#8b5cf6',
+          backgroundColor: 'rgba(139, 92, 246, 0.1)',
+          fill: true,
+          tension: 0.4
         }]
       },
       options: { responsive: true, maintainAspectRatio: false }
@@ -462,7 +677,15 @@ function renderChatDetails(chat) {
     options: { responsive: true, maintainAspectRatio: false }
   });
 
-  const renderList = (arr) => arr ? arr.map(i => { const val = Array.isArray(i) ? i[0] : i; return `<div style="padding:4px 8px;background:rgba(255,255,255,0.05);border-radius:4px;margin-bottom:4px;display:inline-block;margin-right:4px;">${val}</div>`; }).join('') : 'None';
+  // Each item is a [value, count] pair (from Counter.most_common); show the count
+  // as a subtle badge so you can see how often each word/emoji was actually used.
+  const renderList = (arr) => (arr && arr.length)
+    ? arr.map(i => {
+        const [val, count] = Array.isArray(i) ? i : [i, null];
+        const badge = count != null ? `<span class="freq-count">${count.toLocaleString()}</span>` : '';
+        return `<span class="freq-chip">${esc(val)}${badge}</span>`;
+      }).join('')
+    : '<span class="muted-note">None</span>';
   
   document.getElementById('chatEmojisComparison').innerHTML = `
     <div class="comp-col"><div class="comp-title">Me</div><div>${renderList(chat.top_emojis_sent)}</div></div>
@@ -472,6 +695,72 @@ function renderChatDetails(chat) {
     <div class="comp-col"><div class="comp-title">Me</div><div>${renderList(chat.top_words_sent)}</div></div>
     <div class="comp-col"><div class="comp-title">Them</div><div>${renderList(chat.top_words_received)}</div></div>
   `;
+}
+
+function fillMonthlyGaps(monthly) {
+  const keys = Object.keys(monthly).sort();
+  if (keys.length === 0) return { labels: [], values: [] };
+  const labels = [], values = [];
+  let [y, m] = keys[0].split('-').map(Number);
+  const [ey, em] = keys[keys.length - 1].split('-').map(Number);
+  while (y < ey || (y === ey && m <= em)) {
+    const k = `${y}-${String(m).padStart(2, '0')}`;
+    labels.push(k);
+    values.push(monthly[k] || 0);
+    m++;
+    if (m > 12) { m = 1; y++; }
+  }
+  return { labels, values };
+}
+
+function renderChatRecords(chat) {
+  const grid = document.getElementById('chatRecordsGrid');
+  const cards = [];
+
+  const s = chat.day_streak;
+  if (s && s.days >= 2) {
+    cards.push({
+      title: '🔥 Day Streak', handle: `${s.days} days in a row`,
+      stat: `${s.start} → ${s.end}`,
+      blurb: TERM_BLURBS.day_streak
+    });
+  }
+
+  const m = chat.marathon_chat;
+  if (m && m.message_count >= 2) {
+    cards.push({
+      title: '🏃 Marathon', handle: `${m.message_count} msgs back-to-back`,
+      stat: m.duration_hours < 1 ? Math.round(m.duration_hours * 60) + 'm' : m.duration_hours.toFixed(1) + 'h',
+      blurb: TERM_BLURBS.marathon_chat
+    });
+  }
+
+  const g = chat.ghosting;
+  if (g && g.delay_hours > 1) {
+    cards.push({
+      title: '👻 Longest Ghost', handle: `${esc(displayName(g.ghoster))} kept ${esc(displayName(g.asker))} waiting`,
+      stat: formatTime(g.delay_hours * 60),
+      blurb: TERM_BLURBS.ghosting
+    });
+  }
+
+  const b = chat.busiest_day;
+  if (b && b.count >= 10) {
+    cards.push({
+      title: '📅 Busiest Day', handle: b.date,
+      stat: `${b.count.toLocaleString()} msgs`,
+      blurb: TERM_BLURBS.chat_busiest_day
+    });
+  }
+
+  grid.innerHTML = cards.map(c => `
+    <div class="award-card">
+      <span class="award-title">${c.title}</span>
+      <span class="award-handle">${c.handle}</span>
+      <span class="award-stat">${c.stat}</span>
+      <p class="award-blurb">${c.blurb}</p>
+    </div>
+  `).join('');
 }
 
 function renderMembers(chat) {
@@ -499,10 +788,13 @@ function renderMembers(chat) {
   const starter = [...m].sort((a,b) => b.initiation_pct - a.initiation_pct)[0];
   if (starter) cards.push({ title: 'Conv. Starter', handle: starter.handle, stat: starter.initiation_pct.toFixed(1) + '%', blurb: TERM_BLURBS.conv_starter });
 
+  const paparazzi = [...m].sort((a,b) => (b.media_count || 0) - (a.media_count || 0))[0];
+  if (paparazzi && paparazzi.media_count > 0) cards.push({ title: 'Paparazzi', handle: paparazzi.handle, stat: paparazzi.media_count.toLocaleString() + ' media', blurb: TERM_BLURBS.paparazzi });
+
   document.getElementById('awardGrid').innerHTML = cards.map(c => `
     <div class="award-card">
       <span class="award-title">${c.title}</span>
-      <span class="award-handle">${c.handle}</span>
+      <span class="award-handle">${esc(displayName(c.handle))}</span>
       <span class="award-stat">${c.stat}</span>
       <p class="award-blurb">${c.blurb}</p>
     </div>
@@ -512,7 +804,7 @@ function renderMembers(chat) {
   const reactions = (chat.reaction_matrix || []).sort((a,b) => b.count - a.count).slice(0,10);
   document.getElementById('reactionAffinityList').innerHTML = reactions.map(r => `
     <li class="affinity-item">
-      <span class="affinity-text">${r.from} <span class="affinity-arrow">→</span> ${r.to}</span>
+      <span class="affinity-text">${esc(displayName(r.from))} <span class="affinity-arrow">→</span> ${esc(displayName(r.to))}</span>
       <span class="affinity-count">${r.count}</span>
     </li>
   `).join('');
@@ -545,7 +837,7 @@ function renderLeaderboard() {
   body.innerHTML = m.map((x, i) => `
     <tr class="rank-${i+1}">
       <td class="rank-cell">#${i+1}</td>
-      <td>${x.handle}</td>
+      <td>${esc(displayName(x.handle))}</td>
       <td>${x.message_count}</td>
       <td>${x.message_share_pct.toFixed(1)}%</td>
       <td>${x.reactions_received}</td>
