@@ -1,0 +1,25 @@
+# Generated analytics output — contains real parsed iMessage data
+output.json
+
+# Manual contact-name overrides (may contain real names/numbers)
+contacts.json
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/
+
+# macOS
+.DS_Store
+
+# Any local copy of the Messages/AddressBook databases, just in case
+*.db
+*.db-shm
+*.db-wal
+*.sqlite
+*.sqlite3
+*.abcddb
+
+# Claude Code local session config
+.claude/

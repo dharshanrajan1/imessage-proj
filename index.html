@@ -1,0 +1,210 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>iMessage Wrapped</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="styles.css">
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+</head>
+<body>
+  <div class="glass-bg"></div>
+  <div class="dashboard-container">
+    <aside class="sidebar glass-card">
+      <div class="sidebar-header">
+        <h2>Chat Logs</h2>
+        <input type="text" id="chatSearch" placeholder="Search contacts...">
+      </div>
+      <div class="chat-list" id="chatList"></div>
+    </aside>
+
+    <main class="main-content">
+      <header class="main-header glass-card">
+        <div>
+          <h1>iMessage Wrapped</h1>
+          <p class="subtitle" id="mainSubtitle">Your texting habits, visualized</p>
+        </div>
+        <div class="header-controls">
+          <div class="filter-group">
+            <label for="dateRangeSelect">Time Range</label>
+            <select id="dateRangeSelect">
+              <option value="all">All Time</option>
+              <option value="1y">Last Year</option>
+              <option value="6m">Last 6 Months</option>
+              <option value="3m">Last 3 Months</option>
+              <option value="30d">Last 30 Days</option>
+              <option value="custom">Custom Range…</option>
+            </select>
+          </div>
+          <div id="customDateRange" class="custom-date-range hidden">
+            <input type="date" id="startDateInput">
+            <span>to</span>
+            <input type="date" id="endDateInput">
+            <button id="applyDateRange" class="btn-apply">Apply</button>
+          </div>
+          <div class="filter-group">
+            <label>Chat Type</label>
+            <div class="segmented-toggle" id="chatTypeToggle">
+              <button class="segment active" data-type="all">All</button>
+              <button class="segment" data-type="dm">DMs</button>
+              <button class="segment" data-type="group">Group Chats</button>
+            </div>
+          </div>
+        </div>
+      </header>
+      <p id="filterSummary" class="filter-summary hidden"></p>
+
+      <div id="loadingState" class="loading-state">
+        <div class="spinner"></div>
+        <p>Loading your data...</p>
+      </div>
+
+      <div id="statsDashboard" class="stats-dashboard hidden">
+        <nav class="tabs glass-card">
+          <button class="tab-btn active" data-tab="overviewTab">Overview</button>
+          <button class="tab-btn" data-tab="chatTab">Chat Analysis</button>
+          <button class="tab-btn" data-tab="membersTab" id="membersTabBtn" disabled>Members</button>
+        </nav>
+
+        <div class="tab-content active" id="overviewTab">
+          <div class="section-heading">
+            <h2>🏆 All-Time Records</h2>
+            <p class="section-subtitle">Fun facts pulled from your whole texting history (or whatever time range you've selected above).</p>
+          </div>
+          <div class="award-grid" id="globalRecordsGrid"></div>
+
+          <div class="metrics-grid">
+            <div class="metric-card glass-card">
+              <h3>Total Messages</h3>
+              <p id="globalTotalMsg" class="metric-value">0</p>
+            </div>
+            <div class="metric-card glass-card">
+              <h3>Sent</h3>
+              <p id="globalSentMsg" class="metric-value">0</p>
+            </div>
+            <div class="metric-card glass-card">
+              <h3>Received</h3>
+              <p id="globalRecvMsg" class="metric-value">0</p>
+            </div>
+            <div class="metric-card glass-card">
+              <h3>Sent Ratio</h3>
+              <p id="globalSentRatio" class="metric-value">0%</p>
+            </div>
+          </div>
+          
+          <div class="charts-grid">
+            <div class="chart-card glass-card span-2">
+              <h3>Hourly Activity</h3>
+              <canvas id="globalHourlyChart"></canvas>
+            </div>
+            <div class="chart-card glass-card">
+              <h3>Day of Week</h3>
+              <canvas id="globalDailyChart"></canvas>
+            </div>
+            <div class="chart-card glass-card">
+              <h3>Reactions</h3>
+              <canvas id="globalReactionsChart"></canvas>
+            </div>
+            <div class="chart-card glass-card">
+              <h3>Top Words</h3>
+              <ul id="globalTopWords" class="list-container"></ul>
+            </div>
+            <div class="chart-card glass-card">
+              <h3>Top Emojis</h3>
+              <div id="globalTopEmojis" class="emoji-grid"></div>
+            </div>
+          </div>
+        </div>
+
+        <div class="tab-content" id="chatTab">
+          <div class="chat-header glass-card">
+            <h2 id="chatName">Select a Chat</h2>
+            <p id="chatIdentifier"></p>
+          </div>
+          <div class="metrics-grid">
+            <div class="metric-card glass-card">
+              <h3>Total Messages</h3>
+              <p id="chatTotalMsg" class="metric-value">0</p>
+            </div>
+            <div class="metric-card glass-card">
+              <h3>LPM (Me/Them)</h3>
+              <p id="chatLpm" class="metric-value">0 / 0</p>
+            </div>
+            <div class="metric-card glass-card">
+              <h3>Double Texts (Me/Them)</h3>
+              <p id="chatDoubleTexts" class="metric-value">0 / 0</p>
+            </div>
+            <div class="metric-card glass-card">
+              <h3>Avg Response (Me/Them)</h3>
+              <p id="chatResponse" class="metric-value">0 / 0</p>
+            </div>
+          </div>
+
+          <div class="charts-grid">
+            <div class="chart-card glass-card span-2">
+              <h3>Monthly Activity</h3>
+              <canvas id="chatMonthlyChart"></canvas>
+            </div>
+            <div class="chart-card glass-card">
+              <h3>Conversational Balance</h3>
+              <canvas id="chatBalanceChart"></canvas>
+            </div>
+            <div class="chart-card glass-card">
+              <h3>Initiations</h3>
+              <canvas id="chatInitiationsChart"></canvas>
+            </div>
+            <div class="chart-card glass-card">
+              <h3>Top Emojis Comparison</h3>
+              <div class="comparison-grid" id="chatEmojisComparison"></div>
+            </div>
+            <div class="chart-card glass-card">
+              <h3>Top Words Comparison</h3>
+              <div class="comparison-grid" id="chatWordsComparison"></div>
+            </div>
+          </div>
+        </div>
+
+        <div class="tab-content" id="membersTab">
+          <div class="chart-card glass-card">
+            <h3>Message Leaderboard</h3>
+            <div class="table-responsive">
+              <table class="leaderboard-table" id="leaderboardTable">
+                <thead>
+                  <tr>
+                    <th data-sort="rank">Rank</th>
+                    <th data-sort="handle">Member</th>
+                    <th data-sort="message_count">Messages</th>
+                    <th data-sort="message_share_pct">Share %</th>
+                    <th data-sort="reactions_received">Reactions Received</th>
+                    <th data-sort="main_character_score" title="A blended score of message volume, reactions received, and conversations started">MC Score</th>
+                  </tr>
+                </thead>
+                <tbody id="leaderboardBody"></tbody>
+              </table>
+            </div>
+          </div>
+
+          <div class="award-grid" id="awardGrid">
+             <!-- Populated via JS -->
+          </div>
+
+          <div class="charts-grid">
+            <div class="chart-card glass-card span-2">
+              <h3>Who Reacts to Who</h3>
+              <ul id="reactionAffinityList" class="affinity-list"></ul>
+            </div>
+            <div class="chart-card glass-card">
+              <h3>Message Share</h3>
+              <canvas id="memberShareChart"></canvas>
+            </div>
+          </div>
+        </div>
+      </div>
+    </main>
+  </div>
+  <script src="app.js"></script>
+</body>
+</html>
