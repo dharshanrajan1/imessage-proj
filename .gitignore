@@ -1,6 +1,9 @@
 # Generated analytics output — contains real parsed iMessage data
 output.json
 
+# Incremental-parse state (a local message timestamp, regenerated on each run)
+_parse_checkpoint.json
+
 # Manual contact-name overrides (may contain real names/numbers)
 contacts.json
 

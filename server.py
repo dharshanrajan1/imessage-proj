@@ -6,12 +6,16 @@ import threading
 import socketserver
 from urllib.parse import urlparse, parse_qs
 
-from parse_chat import run_analysis, load_contacts
+from parse_chat import run_analysis, load_contacts, load_call_history
 
 # Load contacts once at startup -- re-walking the AddressBook on every
 # date-range change would be wasteful since it never changes mid-session.
 print("Loading contacts...")
 CONTACTS = load_contacts()
+
+# Same for call history: a separate database that doesn't vary by date range.
+print("Loading call history...")
+CALLS = load_call_history()
 
 print("Running chat analysis... This might take a few moments.")
 STATS_CACHE = {}
@@ -19,7 +23,8 @@ STATS_CACHE = {}
 def get_stats(start_date=None, end_date=None):
     key = (start_date, end_date)
     if key not in STATS_CACHE:
-        STATS_CACHE[key] = run_analysis(contacts=CONTACTS, start_date=start_date, end_date=end_date)
+        STATS_CACHE[key] = run_analysis(contacts=CONTACTS, calls=CALLS,
+                                        start_date=start_date, end_date=end_date)
     return STATS_CACHE[key]
 
 # Warm the cache with the default (all-time) view so first load is instant.

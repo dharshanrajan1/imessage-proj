@@ -95,23 +95,48 @@ On every server restart, the analyzer stores a checkpoint of the last parsed mes
 
 ### Sentiment Analysis
 
-Messages are analyzed using `TextBlob` (with graceful fallback to 0.5 if unavailable). Polarity scores (–1 to +1) are normalized to 0–1 (negative to positive). Sentiment is tracked:
-- **Per chat** — a global average sentiment for each DM (shown on the Sentiment insight tab)
+Messages are analyzed using `TextBlob` (install it with `pip install textblob`; without it, sentiment is reported as "no data" rather than a fake neutral score). Polarity scores (–1 to +1) are normalized to 0–1 (negative to positive). Sentiment is tracked:
+- **Per chat** — an average over the chat's scorable messages (shown on the Sentiment insight tab)
 - **Year-over-year** — sentiment trends across years within each chat
+
+**Unscorable messages are excluded, not counted as neutral.** TextBlob's lexicon is tuned on prose and reviews, and roughly **two thirds of real text messages** ("ok", "wyd", "on my way") contain no lexicon word at all, so it returns exactly 0.0 polarity for them. Averaging those in as 0.5 pulled every chat's mean to ≈0.50 and made the whole feature look broken — every conversation scored identically regardless of tone. `get_sentiment()` therefore returns `None` for text with no signal, and callers skip it, so the average reflects only messages that actually expressed something. On a real database this widens the per-chat spread from ≈0.00 to **0.46–0.72**.
+
+Because the denominator is now "messages that carried sentiment", each chat also reports `sentiment_msg_count`, and the Sentiment tab lists only chats with **20+** scorable messages — below that, one enthusiastic message swings the whole average. A chat with nothing scorable reports `null`, which the UI renders as `—` rather than a neutral-looking 0.5.
+
+### Call history
+
+Connected calls are read from the separate macOS call database at `~/Library/Application Support/CallHistoryDB/CallHistory.storedata` and joined onto conversations by normalized handle (`normalize_chat_key()`, the same key DMs use). Only calls that actually connected (`ZDURATION > 0`) count — a missed call says nothing about closeness.
+
+Two limits are deliberate:
+
+- **macOS prunes call history far more aggressively than `chat.db`** (roughly two years, vs. the full message history). Every call figure in the UI is therefore scoped to the chemistry window and labelled *(18mo)*, so it is never read as an all-time total sitting next to all-time message counts.
+- **Group FaceTime isn't mapped.** `ZADDRESS` holds a single handle, so calls join to DMs only; group chats show no call stats.
+
+Call time feeds the chemistry score as a **capped bonus on top of** the weighted base, not as another weighted component — most DMs have no calls at all, so folding voice into the weights would silently deduct points from every text-only chat and reshuffle the ranking. As a bonus, a chat with no calls keeps exactly the score it had. Decayed call minutes use the same half-life as message volume, on a square-root ramp (`CHEM_CALL_BONUS_MAX`, `CHEM_CALL_MINUTES_CAP`).
 
 ### Insights Tab
 
-The Insights tab provides four exploratory views:
+The Insights tab provides three exploratory views. They deliberately operate at **different scopes**, so each panel states its own scope as a badge — a mixed tab that doesn't say which panel applies to what is just confusing:
 
-1. **Trends** — Year-over-year metrics for the active chat: message count, average message length, LPM, and sentiment per year.
-2. **Compare** — Pick any two DMs and see side-by-side metrics: total messages, sentiment, LPM (sent/received), reply times, and chemistry scores.
-3. **Sentiment** — Global sentiment across all DMs + a per-DM breakdown with a 0–1 sentiment bar, plus mood labels (Positive/Neutral/Negative).
+1. **Trends** *(one conversation)* — Year-over-year metrics per year: message count, average message length, LPM, and sentiment, each with a ↑/↓ change against the previous year. The panel has its own conversation picker and falls back to whatever is open in Chat Analysis.
+2. **Compare** *(two conversations)* — Pick any two DMs and see genuinely side-by-side cards: total messages, sentiment, LPM (sent/received), median reply times, call time, and chemistry. Both cards render from one shared row spec so they always line up.
+3. **Sentiment** *(all DMs)* — Global sentiment plus a per-DM breakdown with a 0–1 bar and mood label, ranked, limited to chats with enough scorable messages to mean anything.
 
 All insights are accessible from the main navigation without cluttering the Overview, Chat Analysis, or Members tabs.
 
 ## Potential Improvements
 
-1. **Export to Image/PDF**: Allowing users to generate a "Wrapped" graphic (like Spotify Wrapped) to share with friends.
-2. **Search within Chats**: Adding the ability to search for specific messages or deeply analyze word usage over time for a specific word.
-3. **Time-window Filtering**: Refine insight calculations based on the date range filters in the main header.
-4. **Sentiment Trajectory**: Track how sentiment has evolved over time for a single chat (e.g., sentiment per month).
+1. **Significant UI overhaul**: The current dashboard grew section by section and still shows it. A pass worth doing:
+   - **Overview is one ~4,400px scroll** through four unrelated sections (Records → Chemistry → Leaderboards → Superlatives → global charts) with no in-page navigation. It wants either a sticky section jump-bar or a split into its own sub-tabs.
+   - **Information hierarchy is flat** — every section is a grid of same-weight cards, so nothing signals what matters most. There's no landing summary ("here's your year in three numbers") before the detail.
+   - **No responsive story below ~900px.** The layout collapses the sidebar to a fixed 300px block and stacks everything single-column; it has never been designed for a narrow viewport, only made not to break.
+   - **Charts are Chart.js defaults on a custom design system.** The palette is now unified and validated, but the charts still have no tooltips/crosshair beyond stock behavior, no direct labels, and no table view for accessibility.
+   - **Group-chat surfaces lag DM surfaces.** Members is a lone table plus one chart, and is disabled with no explanation until a group is selected.
+   - **No empty/loading states** beyond the initial spinner — switching date range re-renders with no skeleton, and several panels render blank rather than saying why.
+2. **Export to Image/PDF**: Allowing users to generate a "Wrapped" graphic (like Spotify Wrapped) to share with friends.
+3. **Search within Chats**: Adding the ability to search for specific messages or deeply analyze word usage over time for a specific word.
+4. **Time-window Filtering**: Refine insight calculations based on the date range filters in the main header.
+5. **Sentiment Trajectory**: Track how sentiment has evolved over time for a single chat (e.g., sentiment per month).
+6. **Better sentiment model**: TextBlob's prose-tuned lexicon scores nothing on two thirds of real messages. A messaging-aware model (VADER, or an emoji/slang-aware lexicon) would widen coverage well beyond the current third.
+7. **Broaden automated-sender filtering**: `is_automated_handle()` catches short codes and toll-free numbers, but named senders and no-reply addresses (e.g. "Delta Air Lines", `donotreply@…`) still rank alongside real people in leaderboards and the Sentiment tab.
+8. **Reconcile the chemistry docs with the code**: the Methodology section above still describes the older `quality × sustain × recency_gate` model and constants (`CHEM_TARGET_WEEKS`, `CHEM_SUSTAIN_FLOOR`, `CHEM_RECENCY_HALF_DAYS`), while `parse_chat.py` now scores a recency-decayed 18-month window with volume/regularity components. The write-up needs to catch up to the implementation.

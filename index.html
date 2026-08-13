@@ -18,7 +18,7 @@
         <h2>Chat Logs</h2>
         <input type="text" id="chatSearch" placeholder="Search contacts...">
       </div>
-      <div class="chat-list" id="chatList"></div>
+      <div class="chat-list" id="chatList" role="list"></div>
     </aside>
 
     <main class="main-content">
@@ -63,11 +63,11 @@
       </div>
 
       <div id="statsDashboard" class="stats-dashboard hidden">
-        <nav class="tabs glass-card">
-          <button class="tab-btn active" data-tab="overviewTab">Overview</button>
-          <button class="tab-btn" data-tab="chatTab">Chat Analysis</button>
-          <button class="tab-btn" data-tab="membersTab" id="membersTabBtn" disabled>Members</button>
-          <button class="tab-btn" data-tab="insightsTab">Insights</button>
+        <nav class="tabs glass-card" role="tablist" aria-label="Dashboard sections">
+          <button class="tab-btn active" role="tab" aria-selected="true" aria-controls="overviewTab" data-tab="overviewTab">Overview</button>
+          <button class="tab-btn" role="tab" aria-selected="false" aria-controls="chatTab" data-tab="chatTab">Chat Analysis</button>
+          <button class="tab-btn" role="tab" aria-selected="false" aria-controls="membersTab" data-tab="membersTab" id="membersTabBtn" disabled title="Select a group chat to see its members">Members</button>
+          <button class="tab-btn" role="tab" aria-selected="false" aria-controls="insightsTab" data-tab="insightsTab">Insights</button>
         </nav>
 
         <div class="tab-content active" id="overviewTab">
@@ -79,9 +79,16 @@
 
           <div class="section-heading">
             <h2>🧪 Chemistry — How You Mesh, Ranked</h2>
-            <p class="section-subtitle">Every one-on-one chat gets a 0–100 score based on <em>mutual</em> effort, <em>consistency over time</em>, and <em>how recently</em> you've talked: balanced back-and-forth, fast replies both ways, shared conversation-starting, reactions/laughs you trade — plus how steadily and how recently you keep in touch, so neither a single old burst nor a friendship you've drifted from outranks the people you actually click with now. Ranked best to worst.</p>
+            <p class="section-subtitle">Every one-on-one chat gets a 0–100 score from <em>the last 18 months only</em> — older history doesn't count. It blends how much and how regularly you actually talk (recent weeks count most) with how <em>mutual</em> it is when you do: balanced back-and-forth, fast replies both ways, shared conversation-starting, and the reactions/laughs you trade. Ranked best to worst.</p>
           </div>
           <div class="chemistry-grid" id="chemistryGrid"></div>
+          <div class="chemistry-rest" id="chemistryRest"></div>
+
+          <div class="section-heading">
+            <h2>📊 Leaderboards</h2>
+            <p class="section-subtitle">The top 5 in each category across all your one-on-one chats.</p>
+          </div>
+          <div class="leaderboard-grid" id="dmLeaderboardsGrid"></div>
 
           <div class="section-heading">
             <h2>💬 DM Superlatives</h2>
@@ -151,24 +158,28 @@
               <p id="chatChemistry" class="metric-value">—</p>
             </div>
             <div class="metric-card glass-card">
-              <h3>LPM (Me/Them)</h3>
+              <h3>Laughs per Message</h3>
               <p id="chatLpm" class="metric-value">0 / 0</p>
             </div>
             <div class="metric-card glass-card">
-              <h3>Double Texts (Me/Them)</h3>
+              <h3>Double Texts</h3>
               <p id="chatDoubleTexts" class="metric-value">0 / 0</p>
             </div>
             <div class="metric-card glass-card">
-              <h3>Typical Reply (Me/Them)</h3>
+              <h3>Typical Reply</h3>
               <p id="chatResponse" class="metric-value">0 / 0</p>
             </div>
             <div class="metric-card glass-card">
-              <h3>Words/Msg (Me/Them)</h3>
+              <h3>Words per Message</h3>
               <p id="chatWords" class="metric-value">0 / 0</p>
             </div>
             <div class="metric-card glass-card">
-              <h3>Media (Me/Them)</h3>
+              <h3>Media Shared</h3>
               <p id="chatMedia" class="metric-value">0 / 0</p>
+            </div>
+            <div class="metric-card glass-card">
+              <h3>Call Time (18mo)</h3>
+              <p id="chatCalls" class="metric-value">—</p>
             </div>
           </div>
 
@@ -239,16 +250,24 @@
         </div>
 
         <div class="tab-content" id="insightsTab">
-          <div class="insights-tabs glass-card">
-            <button class="insights-tab-btn active" data-insight="trends">Trends</button>
-            <button class="insights-tab-btn" data-insight="compare">Compare</button>
-            <button class="insights-tab-btn" data-insight="sentiment">Sentiment</button>
+          <div class="insights-tabs glass-card" role="tablist" aria-label="Insight views">
+            <button class="insights-tab-btn active" role="tab" aria-selected="true" data-insight="trends">Trends</button>
+            <button class="insights-tab-btn" role="tab" aria-selected="false" data-insight="compare">Compare</button>
+            <button class="insights-tab-btn" role="tab" aria-selected="false" data-insight="sentiment">Sentiment</button>
           </div>
 
           <div class="insight-content active" id="trendsContent">
             <div class="section-heading">
               <h2>Year-over-Year Trends</h2>
-              <p class="section-subtitle">How your messaging patterns have evolved across years.</p>
+              <p class="section-scope">One conversation at a time</p>
+              <p class="section-subtitle" id="trendsSubtitle">Pick a conversation to see how it has evolved across years.</p>
+            </div>
+            <div class="single-control">
+              <div class="compare-select">
+                <label>Conversation</label>
+                <input type="text" id="trendsChatInput" placeholder="Search contact..." autocomplete="off">
+                <ul id="trendsChatList" class="contact-dropdown hidden"></ul>
+              </div>
             </div>
             <div id="trendsGrid" class="trends-grid"></div>
           </div>
@@ -256,7 +275,8 @@
           <div class="insight-content" id="compareContent">
             <div class="section-heading">
               <h2>Compare Two DMs</h2>
-              <p class="section-subtitle">Side-by-side comparison of two conversations.</p>
+              <p class="section-scope">Two conversations, side by side</p>
+              <p class="section-subtitle">Pick any two DMs below — independent of what's selected in the sidebar.</p>
             </div>
             <div class="comparison-controls">
               <div class="compare-select">
@@ -276,7 +296,8 @@
           <div class="insight-content" id="sentimentContent">
             <div class="section-heading">
               <h2>Sentiment Analysis</h2>
-              <p class="section-subtitle">Overall mood and tone across your conversations (0 = negative, 1 = positive).</p>
+              <p class="section-scope">All DMs</p>
+              <p class="section-subtitle">Mood and tone across every conversation (0 = negative, 1 = positive). Only messages carrying a recognisable sentiment word are scored, and only chats with 20+ such messages are listed.</p>
             </div>
             <div class="metrics-grid">
               <div class="metric-card glass-card">

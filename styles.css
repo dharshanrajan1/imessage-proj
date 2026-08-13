@@ -12,6 +12,21 @@
 }
 
 * { box-sizing: border-box; margin: 0; padding: 0; }
+
+/* Keyboard users had no visible focus anywhere: buttons and inputs all reset
+   outline or relied on :hover only. */
+:focus-visible {
+  outline: 2px solid var(--accent-purple);
+  outline-offset: 2px;
+  border-radius: 6px;
+}
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}
 body {
   font-family: 'Outfit', sans-serif;
   background: #0a0a0f;
@@ -106,6 +121,15 @@ body {
   background: rgba(2, 132, 199, 0.2); color: #38bdf8;
 }
 .chat-count { font-size: 0.85rem; color: var(--text-secondary); }
+.sidebar-empty { padding: 1.5rem 0.5rem; color: var(--text-secondary); font-size: 0.9rem; text-align: center; }
+.sidebar-more {
+  margin: 0.5rem 0 0.25rem; padding: 0.6rem; width: 100%;
+  background: rgba(255,255,255,0.04); border: 1px dashed var(--card-border);
+  border-radius: 8px; color: var(--text-secondary);
+  font-family: inherit; font-size: 0.8rem; cursor: pointer;
+  transition: background 0.2s ease, color 0.2s ease;
+}
+.sidebar-more:hover { background: rgba(255,255,255,0.08); color: var(--text-primary); }
 
 .main-content {
   flex: 1; display: flex; flex-direction: column; gap: 1.5rem;
@@ -223,8 +247,35 @@ body {
 .metrics-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 1.5rem; }
 .metric-card { padding: 1.5rem; text-align: center; display: flex; flex-direction: column; gap: 0.75rem; transition: transform 0.2s ease; }
 .metric-card:hover { transform: translateY(-3px); }
-.metric-card h3 { font-size: 0.9rem; color: var(--text-secondary); font-weight: 500; text-transform: uppercase; letter-spacing: 0.5px; }
-.metric-value { font-size: 2rem; font-weight: 700; background: linear-gradient(135deg, #fff, #cbd5e1); -webkit-background-clip: text; -webkit-text-fill-color: transparent; }
+/* Two lines reserved for every heading, so a wrapping title ("Laughs per
+   Message") doesn't push its value below the values in neighbouring tiles. */
+.metric-card h3 {
+  font-size: 0.9rem; color: var(--text-secondary); font-weight: 500;
+  text-transform: uppercase; letter-spacing: 0.5px;
+  min-height: 2.4em; display: flex; align-items: center; justify-content: center;
+}
+.metric-card .metric-value { margin-top: auto; }
+.metric-value {
+  font-size: 2rem; font-weight: 700;
+  /* color first so the number is still visible if background-clip:text isn't
+     honoured -- transparent fill with no fallback renders an invisible value. */
+  color: #f1f5f9;
+  background: linear-gradient(135deg, #fff, #cbd5e1);
+  -webkit-background-clip: text; background-clip: text;
+}
+@supports ((-webkit-background-clip: text) or (background-clip: text)) {
+  .metric-value { -webkit-text-fill-color: transparent; }
+}
+
+/* Me-vs-them values: each side carries its own label so the number is readable
+   without cross-referencing the card heading. */
+.pair { display: inline-flex; align-items: baseline; gap: 0.5rem; -webkit-text-fill-color: initial; }
+.pair-side { display: inline-flex; flex-direction: column; align-items: center; line-height: 1.1; color: var(--text-primary); }
+.pair-side small {
+  font-size: 0.6rem; font-weight: 600; text-transform: uppercase; letter-spacing: 0.6px;
+  color: var(--text-secondary); margin-bottom: 0.15rem;
+}
+.pair-sep { color: var(--text-secondary); opacity: 0.4; font-weight: 400; }
 
 .charts-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 1.5rem; }
 .span-2 { grid-column: span 2; }
@@ -273,10 +324,37 @@ canvas { max-height: 300px; width: 100% !important; }
 .award-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 1rem; margin-top: 1rem; }
 .award-card { padding: 1.25rem; border-radius: 12px; background: rgba(255,255,255,0.03); border-top: 3px solid var(--accent-purple); display: flex; flex-direction: column; gap: 0.5rem; transition: transform 0.2s ease, box-shadow 0.2s ease; }
 .award-card:hover { transform: translateY(-3px); box-shadow: 0 8px 24px rgba(139, 92, 246, 0.15); }
-.award-title { font-size: 0.8rem; text-transform: uppercase; letter-spacing: 0.5px; color: var(--text-secondary); }
-.award-handle { font-size: 1.1rem; font-weight: 600; color: var(--text-primary); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.award-title { font-size: 0.8rem; text-transform: uppercase; letter-spacing: 0.5px; color: var(--text-secondary); min-height: 2.4em; }
+/* Names are the point of these cards, so give them a second line before
+   truncating -- "LAMBY FBLA OFFI…" cut off exactly the identifying part. */
+.award-handle {
+  font-size: 1.1rem; font-weight: 600; color: var(--text-primary);
+  display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical;
+  overflow: hidden; overflow-wrap: anywhere; line-height: 1.25;
+}
 .award-stat { font-size: 0.9rem; color: var(--text-secondary); }
-.award-blurb { font-size: 0.78rem; color: var(--text-secondary); opacity: 0.75; line-height: 1.4; margin-top: 0.15rem; }
+/* Pinned to the bottom so cards in a row share a baseline instead of leaving a
+   ragged gap under the shorter ones; clamped so one long quote (the "longest
+   message" record) can't set the height for the whole row. */
+.award-blurb {
+  font-size: 0.78rem; color: var(--text-secondary); opacity: 0.75; line-height: 1.4;
+  margin-top: auto; padding-top: 0.5rem;
+  display: -webkit-box; -webkit-line-clamp: 4; -webkit-box-orient: vertical; overflow: hidden;
+}
+.marathon-opener { display: block; margin-top: 0.4rem; font-style: italic; color: var(--text-primary); opacity: 0.9; }
+
+/* Top-5 leaderboards */
+.leaderboard-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 1rem; margin-top: 1rem; }
+.leaderboard-card { padding: 1.25rem; }
+.lb-title { font-size: 0.95rem; margin: 0 0 0.85rem; color: var(--text-primary); }
+.lb-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 0.55rem; }
+.lb-row { display: flex; align-items: baseline; gap: 0.6rem; }
+.lb-rank { flex: 0 0 1.35rem; font-weight: 700; color: var(--accent-purple); font-size: 0.9rem; }
+/* Names were losing their tail to an ellipsis in a ~260px card ("Kanishk
+   Aggar…"); wrapping to a second line keeps them identifiable. */
+.lb-name { flex: 1 1 auto; min-width: 0; font-weight: 600; color: var(--text-primary); overflow-wrap: anywhere; }
+.lb-sub { display: block; font-weight: 400; font-size: 0.72rem; font-style: italic; color: var(--text-secondary); opacity: 0.8; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.lb-value { flex: 0 0 auto; font-variant-numeric: tabular-nums; color: var(--text-secondary); font-size: 0.9rem; }
 
 /* Chemistry / "mesh" leaderboard */
 .chemistry-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap: 1rem; margin-top: 1rem; }
@@ -297,11 +375,49 @@ canvas { max-height: 300px; width: 100% !important; }
 .chem-score { display: flex; flex-direction: column; align-items: center; line-height: 1; }
 .chem-score-num { font-size: 2rem; font-weight: 700; background: linear-gradient(135deg, var(--accent-purple), var(--accent-pink)); -webkit-background-clip: text; background-clip: text; -webkit-text-fill-color: transparent; }
 .chem-score-label { font-size: 0.7rem; color: var(--text-secondary); margin-top: 0.15rem; }
-.chem-bars { display: flex; flex-direction: column; gap: 0.4rem; }
-.chem-bar-row { display: flex; align-items: center; gap: 0.75rem; }
-.chem-bar-label { font-size: 0.72rem; color: var(--text-secondary); width: 72px; flex-shrink: 0; text-transform: uppercase; letter-spacing: 0.3px; }
-.chem-bar-track { flex: 1; height: 6px; background: rgba(255, 255, 255, 0.06); border-radius: 3px; overflow: hidden; }
+/* A grid (not per-row flex) so every label, track and number lines up across
+   all seven rows -- "Reply speed" used to wrap onto two lines and knock its
+   own bar out of alignment with the rest. */
+.chem-bars { display: grid; grid-template-columns: 82px 1fr 2ch; gap: 0.45rem 0.75rem; align-items: center; }
+.chem-bar-row { display: contents; }
+.chem-bar-label { font-size: 0.72rem; color: var(--text-secondary); text-transform: uppercase; letter-spacing: 0.3px; white-space: nowrap; }
+.chem-bar-track { height: 6px; background: rgba(255, 255, 255, 0.06); border-radius: 3px; overflow: hidden; }
 .chem-bar-fill { display: block; height: 100%; border-radius: 3px; background: linear-gradient(to right, var(--accent-purple), var(--accent-pink)); transition: width 0.4s ease; }
+.chem-bar-pct { font-size: 0.68rem; color: var(--text-secondary); font-variant-numeric: tabular-nums; text-align: right; opacity: 0.75; }
+/* Reserved even when empty, so cards in a row stay the same height whether or
+   not the chat has call time. */
+.chem-calls { font-size: 0.72rem; color: var(--text-secondary); opacity: 0.72; min-height: 1.1em; margin-top: auto; }
+
+/* Ranks below the featured few: one scannable line each. */
+.chemistry-rest { display: flex; flex-direction: column; gap: 0.75rem; align-items: flex-start; }
+.chem-rows { list-style: none; margin: 0; padding: 0; width: 100%; display: flex; flex-direction: column; gap: 0.15rem; }
+.chem-row {
+  display: grid;
+  grid-template-columns: 3rem minmax(7rem, 12rem) 1fr 120px 2.5rem;
+  align-items: center; gap: 0.85rem;
+  padding: 0.5rem 0.75rem; border-radius: 8px;
+}
+.chem-row:nth-child(odd) { background: rgba(255, 255, 255, 0.02); }
+.chem-row-rank { font-size: 0.8rem; font-weight: 700; color: var(--text-secondary); font-variant-numeric: tabular-nums; }
+.chem-row-name { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.chem-row-meta { font-size: 0.78rem; color: var(--text-secondary); font-style: italic; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.chem-row-track { height: 6px; background: rgba(255,255,255,0.06); border-radius: 3px; overflow: hidden; }
+.chem-row-fill { display: block; height: 100%; border-radius: 3px; background: linear-gradient(to right, var(--accent-purple), var(--accent-pink)); }
+.chem-row-score { font-weight: 700; font-variant-numeric: tabular-nums; text-align: right; }
+
+.btn-ghost {
+  padding: 0.5rem 1rem; border-radius: 8px;
+  background: rgba(255,255,255,0.05); border: 1px solid var(--card-border);
+  color: var(--text-primary); font-family: inherit; font-size: 0.85rem; font-weight: 500;
+  cursor: pointer; transition: background 0.2s ease, border-color 0.2s ease;
+}
+.btn-ghost:hover { background: rgba(255,255,255,0.1); border-color: rgba(255,255,255,0.2); }
+
+@media (max-width: 900px) {
+  /* Drop the highlight text first -- name, bar and score carry the meaning. */
+  .chem-row { grid-template-columns: 2.5rem 1fr 70px 2.5rem; }
+  .chem-row-meta { display: none; }
+}
 
 .section-heading { display: flex; flex-direction: column; gap: 0.25rem; }
 .section-heading h2 { font-size: 1.3rem; font-weight: 600; }
@@ -354,8 +470,8 @@ canvas { max-height: 300px; width: 100% !important; }
 .trend-stat { display: flex; justify-content: space-between; padding: 0.5rem 0; border-bottom: 1px solid rgba(255,255,255,0.05); }
 .trend-stat:last-child { border-bottom: none; }
 .trend-label { color: var(--text-secondary); font-size: 0.9rem; }
-.trend-value { font-weight: 600; }
-.trend-arrow { font-size: 0.8rem; }
+.trend-value { font-weight: 600; display: inline-flex; align-items: baseline; gap: 0.4rem; }
+.trend-arrow { font-size: 0.75rem; font-weight: 600; font-variant-numeric: tabular-nums; }
 .trend-arrow.up { color: var(--accent-green); }
 .trend-arrow.down { color: var(--accent-pink); }
 
@@ -364,6 +480,32 @@ canvas { max-height: 300px; width: 100% !important; }
   grid-template-columns: repeat(2, 1fr);
   gap: 2rem;
   margin: 2rem 0;
+}
+/* Trends needs one picker where Compare needs two; same column width so the
+   two panels line up when you flip between them. */
+.single-control {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 2rem;
+  margin: 2rem 0;
+}
+.single-control > .compare-select { grid-column: 1; }
+/* Each insight panel states what it applies to, since the tab deliberately
+   mixes per-conversation and all-DM views. */
+.section-scope {
+  /* .section-heading is a flex column, so the pill would stretch full-width
+     without this. */
+  align-self: flex-start;
+  margin-top: 0.4rem;
+  padding: 0.2rem 0.6rem;
+  border-radius: 999px;
+  background: rgba(139, 92, 246, 0.15);
+  border: 1px solid rgba(139, 92, 246, 0.35);
+  color: var(--accent-purple);
+  font-size: 0.72rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
 }
 .compare-select {
   position: relative;
