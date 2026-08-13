@@ -313,6 +313,161 @@ canvas { max-height: 300px; width: 100% !important; }
 .affinity-arrow { color: var(--accent-purple); }
 .affinity-count { font-weight: 600; color: var(--accent-pink); }
 
+/* Insights Tab Styling */
+.insights-tabs { display: flex; gap: 1rem; margin-bottom: 2rem; padding: 1rem; }
+.insights-tab-btn {
+  padding: 0.75rem 1.5rem;
+  background: rgba(255,255,255,0.05);
+  border: 1px solid rgba(255,255,255,0.1);
+  color: var(--text-secondary);
+  border-radius: 8px;
+  cursor: pointer;
+  transition: all 0.3s ease;
+  font-family: 'Outfit', sans-serif;
+  font-size: 0.95rem;
+}
+.insights-tab-btn.active {
+  background: linear-gradient(135deg, var(--accent-purple), var(--accent-pink));
+  color: white;
+  border-color: transparent;
+}
+.insights-tab-btn:hover {
+  background: rgba(255,255,255,0.1);
+  border-color: rgba(255,255,255,0.2);
+}
+
+.insight-content { display: none; }
+.insight-content.active { display: block; }
+
+.trends-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+  gap: 1.5rem;
+  margin-top: 1.5rem;
+}
+.trend-card {
+  padding: 1.5rem;
+  border-radius: 12px;
+  background: rgba(255,255,255,0.03);
+}
+.trend-card h4 { margin-bottom: 1rem; color: var(--accent-purple); }
+.trend-stat { display: flex; justify-content: space-between; padding: 0.5rem 0; border-bottom: 1px solid rgba(255,255,255,0.05); }
+.trend-stat:last-child { border-bottom: none; }
+.trend-label { color: var(--text-secondary); font-size: 0.9rem; }
+.trend-value { font-weight: 600; }
+.trend-arrow { font-size: 0.8rem; }
+.trend-arrow.up { color: var(--accent-green); }
+.trend-arrow.down { color: var(--accent-pink); }
+
+.comparison-controls {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 2rem;
+  margin: 2rem 0;
+}
+.compare-select {
+  position: relative;
+}
+.compare-select label {
+  display: block;
+  margin-bottom: 0.5rem;
+  color: var(--text-secondary);
+  font-size: 0.9rem;
+}
+.compare-select input {
+  width: 100%;
+  padding: 0.75rem 1rem;
+  background: rgba(255,255,255,0.05);
+  border: 1px solid rgba(255,255,255,0.1);
+  border-radius: 8px;
+  color: var(--text-primary);
+  font-family: 'Outfit', sans-serif;
+}
+.compare-select input:focus {
+  outline: none;
+  border-color: var(--accent-purple);
+  background: rgba(255,255,255,0.08);
+}
+.contact-dropdown {
+  position: absolute;
+  top: 100%;
+  left: 0;
+  right: 0;
+  background: var(--card-bg);
+  border: 1px solid var(--card-border);
+  border-radius: 8px;
+  max-height: 200px;
+  overflow-y: auto;
+  list-style: none;
+  z-index: 10;
+  margin-top: 0.25rem;
+}
+.contact-dropdown.hidden { display: none; }
+.contact-dropdown li {
+  padding: 0.75rem 1rem;
+  cursor: pointer;
+  transition: background 0.2s;
+}
+.contact-dropdown li:hover {
+  background: rgba(139, 92, 246, 0.2);
+}
+
+.comparison-results {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 2rem;
+  margin-top: 2rem;
+}
+.comparison-results.hidden { display: none; }
+.compare-card {
+  padding: 1.5rem;
+  background: rgba(255,255,255,0.03);
+  border-radius: 12px;
+}
+.compare-card h3 {
+  margin-bottom: 1.5rem;
+  color: var(--accent-purple);
+}
+.compare-stat {
+  display: flex;
+  justify-content: space-between;
+  padding: 0.75rem 0;
+  border-bottom: 1px solid rgba(255,255,255,0.05);
+}
+.compare-stat:last-child { border-bottom: none; }
+.compare-label { color: var(--text-secondary); font-size: 0.9rem; }
+.compare-value { font-weight: 600; }
+
+.sentiment-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+  gap: 1.5rem;
+  margin-top: 1.5rem;
+}
+.sentiment-card {
+  padding: 1.5rem;
+  border-radius: 12px;
+  background: rgba(255,255,255,0.03);
+}
+.sentiment-card h4 { margin-bottom: 1rem; }
+.sentiment-value {
+  font-size: 1.5rem;
+  font-weight: 600;
+  margin: 0.5rem 0;
+}
+.sentiment-bar {
+  height: 8px;
+  background: rgba(255,255,255,0.1);
+  border-radius: 4px;
+  overflow: hidden;
+  margin-top: 0.5rem;
+}
+.sentiment-fill {
+  height: 100%;
+  background: linear-gradient(90deg, var(--accent-pink), var(--accent-purple));
+  border-radius: 4px;
+}
+
 @media (max-width: 1200px) {
   .charts-grid { grid-template-columns: 1fr 1fr; }
   .span-2 { grid-column: span 2; }

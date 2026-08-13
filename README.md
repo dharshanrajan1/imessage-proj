@@ -89,9 +89,29 @@ Group chats you never named show up in `chat.db` as an opaque identifier like `c
 - **Day streak** — longest run of consecutive calendar days with at least one message. **Marathon** — longest unbroken back-and-forth (no gap over 1 hour). **Ghosting** — the longest anyone made someone wait before answering a message containing "?". **LPM** — laughs (haha/lol/lmao/…) per message. **Ghost score** — how far below their "fair share" (`1/num_members`) of the conversation a group member falls.
 - **Word cleaning** — text is lowercased, URLs/emails stripped, curly apostrophes normalized to ASCII so contractions expand correctly (otherwise "you'll" leaks a stray "ll"), contractions expanded, then tokenized; stopwords, filler ("lol", "idk", …), and laughter are removed, and elongated spellings ("soooo") are de-duplicated for stopword matching.
 
+### Incremental Parsing
+
+On every server restart, the analyzer stores a checkpoint of the last parsed message timestamp in `_parse_checkpoint.json`. On the next run, if `incremental=True` is passed to `run_analysis()`, only messages added since the checkpoint are parsed, dramatically speeding up startup. The checkpoint is automatically updated after each parse.
+
+### Sentiment Analysis
+
+Messages are analyzed using `TextBlob` (with graceful fallback to 0.5 if unavailable). Polarity scores (–1 to +1) are normalized to 0–1 (negative to positive). Sentiment is tracked:
+- **Per chat** — a global average sentiment for each DM (shown on the Sentiment insight tab)
+- **Year-over-year** — sentiment trends across years within each chat
+
+### Insights Tab
+
+The Insights tab provides four exploratory views:
+
+1. **Trends** — Year-over-year metrics for the active chat: message count, average message length, LPM, and sentiment per year.
+2. **Compare** — Pick any two DMs and see side-by-side metrics: total messages, sentiment, LPM (sent/received), reply times, and chemistry scores.
+3. **Sentiment** — Global sentiment across all DMs + a per-DM breakdown with a 0–1 sentiment bar, plus mood labels (Positive/Neutral/Negative).
+
+All insights are accessible from the main navigation without cluttering the Overview, Chat Analysis, or Members tabs.
+
 ## Potential Improvements
 
-1. **Data Caching / Incremental Updates**: Currently, the entire `chat.db` is parsed every time the server starts. Caching the output JSON and only parsing messages that arrived after the last timestamp would significantly speed up startup times.
-2. **Sentiment Analysis**: Integrating a lightweight NLP library (like `TextBlob` or `VADER`) to determine if conversations are generally positive, negative, or neutral.
-3. **Export to Image/PDF**: Allowing users to generate a "Wrapped" graphic (like Spotify Wrapped) to share with friends.
-4. **Search within Chats**: Adding the ability to search for specific messages or deeply analyze word usage over time for a specific word.
+1. **Export to Image/PDF**: Allowing users to generate a "Wrapped" graphic (like Spotify Wrapped) to share with friends.
+2. **Search within Chats**: Adding the ability to search for specific messages or deeply analyze word usage over time for a specific word.
+3. **Time-window Filtering**: Refine insight calculations based on the date range filters in the main header.
+4. **Sentiment Trajectory**: Track how sentiment has evolved over time for a single chat (e.g., sentiment per month).

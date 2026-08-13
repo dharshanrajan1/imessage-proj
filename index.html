@@ -67,6 +67,7 @@
           <button class="tab-btn active" data-tab="overviewTab">Overview</button>
           <button class="tab-btn" data-tab="chatTab">Chat Analysis</button>
           <button class="tab-btn" data-tab="membersTab" id="membersTabBtn" disabled>Members</button>
+          <button class="tab-btn" data-tab="insightsTab">Insights</button>
         </nav>
 
         <div class="tab-content active" id="overviewTab">
@@ -234,6 +235,56 @@
               <h3>Message Share</h3>
               <canvas id="memberShareChart"></canvas>
             </div>
+          </div>
+        </div>
+
+        <div class="tab-content" id="insightsTab">
+          <div class="insights-tabs glass-card">
+            <button class="insights-tab-btn active" data-insight="trends">Trends</button>
+            <button class="insights-tab-btn" data-insight="compare">Compare</button>
+            <button class="insights-tab-btn" data-insight="sentiment">Sentiment</button>
+          </div>
+
+          <div class="insight-content active" id="trendsContent">
+            <div class="section-heading">
+              <h2>Year-over-Year Trends</h2>
+              <p class="section-subtitle">How your messaging patterns have evolved across years.</p>
+            </div>
+            <div id="trendsGrid" class="trends-grid"></div>
+          </div>
+
+          <div class="insight-content" id="compareContent">
+            <div class="section-heading">
+              <h2>Compare Two DMs</h2>
+              <p class="section-subtitle">Side-by-side comparison of two conversations.</p>
+            </div>
+            <div class="comparison-controls">
+              <div class="compare-select">
+                <label>DM #1</label>
+                <input type="text" id="compareDM1Input" placeholder="Search contact..." autocomplete="off">
+                <ul id="compareDM1List" class="contact-dropdown hidden"></ul>
+              </div>
+              <div class="compare-select">
+                <label>DM #2</label>
+                <input type="text" id="compareDM2Input" placeholder="Search contact..." autocomplete="off">
+                <ul id="compareDM2List" class="contact-dropdown hidden"></ul>
+              </div>
+            </div>
+            <div id="comparisonResults" class="comparison-results hidden"></div>
+          </div>
+
+          <div class="insight-content" id="sentimentContent">
+            <div class="section-heading">
+              <h2>Sentiment Analysis</h2>
+              <p class="section-subtitle">Overall mood and tone across your conversations (0 = negative, 1 = positive).</p>
+            </div>
+            <div class="metrics-grid">
+              <div class="metric-card glass-card">
+                <h3>Global Sentiment</h3>
+                <p id="globalSentiment" class="metric-value">0.5</p>
+              </div>
+            </div>
+            <div id="sentimentGrid" class="sentiment-grid"></div>
           </div>
         </div>
       </div>

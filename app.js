@@ -854,3 +854,171 @@ document.querySelectorAll('th[data-sort]').forEach(th => {
     if (state.activeChat) renderLeaderboard();
   });
 });
+
+/* Insights Tab Functionality */
+document.querySelectorAll('.insights-tab-btn').forEach(btn => {
+  btn.addEventListener('click', () => {
+    const insight = btn.dataset.insight;
+    document.querySelectorAll('.insights-tab-btn').forEach(b => b.classList.remove('active'));
+    document.querySelectorAll('.insight-content').forEach(c => c.classList.remove('active'));
+    btn.classList.add('active');
+    document.getElementById(insight + 'Content').classList.add('active');
+
+    if (insight === 'trends') renderTrends();
+    else if (insight === 'sentiment') renderSentiment();
+  });
+});
+
+function renderTrends() {
+  if (!state.activeChat) return;
+  const yearlyStats = state.activeChat.yearly_stats || {};
+  const years = Object.keys(yearlyStats).sort();
+
+  if (years.length === 0) {
+    document.getElementById('trendsGrid').innerHTML = '<p>No year-over-year data available.</p>';
+    return;
+  }
+
+  const grid = document.getElementById('trendsGrid');
+  grid.innerHTML = years.map(year => {
+    const stats = yearlyStats[year];
+    const prevYear = parseInt(year) - 1;
+    const prevStats = yearlyStats[prevYear];
+
+    const getChange = (curr, prev) => {
+      if (!prev || prev === 0) return { pct: 0, arrow: '' };
+      const pct = ((curr - prev) / prev * 100).toFixed(0);
+      const arrow = pct >= 0 ? '↑' : '↓';
+      return { pct, arrow };
+    };
+
+    const msgChange = getChange(stats.total, prevStats?.total);
+    const sentimentChange = getChange(stats.sentiment_avg, prevStats?.sentiment_avg);
+    const lenChange = getChange(stats.avg_msg_length, prevStats?.avg_msg_length);
+    const lpmChange = getChange(stats.lpm, prevStats?.lpm);
+
+    return `
+      <div class="trend-card glass-card">
+        <h4>${year}</h4>
+        <div class="trend-stat">
+          <span class="trend-label">Messages</span>
+          <span class="trend-value">${stats.total || 0}</span>
+        </div>
+        <div class="trend-stat">
+          <span class="trend-label">Avg Message Length</span>
+          <span class="trend-value">${(stats.avg_msg_length || 0).toFixed(1)} words</span>
+        </div>
+        <div class="trend-stat">
+          <span class="trend-label">LPM</span>
+          <span class="trend-value">${(stats.lpm || 0).toFixed(3)}</span>
+        </div>
+        <div class="trend-stat">
+          <span class="trend-label">Sentiment</span>
+          <span class="trend-value">${(stats.sentiment_avg || 0.5).toFixed(2)}</span>
+        </div>
+      </div>
+    `;
+  }).join('');
+}
+
+function renderSentiment() {
+  const globalSentiment = state.data.global_stats_by_type?.dm?.sentiment_avg || 0.5;
+  document.getElementById('globalSentiment').textContent = globalSentiment.toFixed(2);
+
+  const dms = state.data.chats.filter(c => !c.is_group_chat);
+  const grid = document.getElementById('sentimentGrid');
+
+  grid.innerHTML = dms.map(chat => {
+    const sentiment = chat.sentiment_avg || 0.5;
+    const fillPct = (sentiment * 100).toFixed(0);
+    const moodLabel = sentiment > 0.65 ? 'Positive' : sentiment > 0.45 ? 'Neutral' : 'Negative';
+
+    return `
+      <div class="sentiment-card glass-card">
+        <h4>${esc(chat.display_name)}</h4>
+        <div class="sentiment-value">${sentiment.toFixed(2)}</div>
+        <div class="sentiment-bar">
+          <div class="sentiment-fill" style="width: ${fillPct}%"></div>
+        </div>
+        <div style="color: var(--text-secondary); font-size: 0.85rem; margin-top: 0.5rem;">${moodLabel}</div>
+      </div>
+    `;
+  }).join('');
+}
+
+// Compare feature with searchable dropdown
+const dmInput1 = document.getElementById('compareDM1Input');
+const dmInput2 = document.getElementById('compareDM2Input');
+const dmList1 = document.getElementById('compareDM1List');
+const dmList2 = document.getElementById('compareDM2List');
+let selectedDM1 = null;
+let selectedDM2 = null;
+
+function updateDMDropdown(input, list, selectedVar) {
+  const query = input.value.toLowerCase();
+  const dms = state.data.chats.filter(c => !c.is_group_chat);
+  const filtered = dms.filter(c => c.display_name.toLowerCase().includes(query));
+
+  list.innerHTML = filtered.map(dm => `
+    <li data-id="${dm.chat_identifier}">${esc(dm.display_name)}</li>
+  `).join('');
+
+  if (filtered.length > 0) list.classList.remove('hidden');
+  else list.classList.add('hidden');
+
+  list.querySelectorAll('li').forEach(li => {
+    li.addEventListener('click', () => {
+      const id = li.dataset.id;
+      const selected = dms.find(d => d.chat_identifier === id);
+      if (input === dmInput1) {
+        selectedDM1 = selected;
+        dmInput1.value = selected.display_name;
+      } else {
+        selectedDM2 = selected;
+        dmInput2.value = selected.display_name;
+      }
+      list.classList.add('hidden');
+      if (selectedDM1 && selectedDM2) renderComparison();
+    });
+  });
+}
+
+dmInput1.addEventListener('input', () => updateDMDropdown(dmInput1, dmList1, 'selectedDM1'));
+dmInput2.addEventListener('input', () => updateDMDropdown(dmInput2, dmList2, 'selectedDM2'));
+
+document.addEventListener('click', e => {
+  if (!e.target.closest('.compare-select')) {
+    dmList1.classList.add('hidden');
+    dmList2.classList.add('hidden');
+  }
+});
+
+function renderComparison() {
+  if (!selectedDM1 || !selectedDM2) return;
+
+  const results = document.getElementById('comparisonResults');
+  results.classList.remove('hidden');
+
+  const compareMetric = (label, val1, val2) => `
+    <div class="compare-stat">
+      <span class="compare-label">${label}</span>
+      <span class="compare-value">${val1} vs ${val2}</span>
+    </div>
+  `;
+
+  results.innerHTML = `
+    <div class="compare-card glass-card">
+      <h3>${esc(selectedDM1.display_name)}</h3>
+      ${compareMetric('Messages', selectedDM1.total_messages, selectedDM2.total_messages)}
+      ${compareMetric('Sentiment', (selectedDM1.sentiment_avg || 0.5).toFixed(2), (selectedDM2.sentiment_avg || 0.5).toFixed(2))}
+      ${compareMetric('LPM (You)', selectedDM1.lpm_sent.toFixed(3), selectedDM2.lpm_sent.toFixed(3))}
+      ${compareMetric('LPM (Them)', selectedDM1.lpm_recv.toFixed(3), selectedDM2.lpm_recv.toFixed(3))}
+      ${compareMetric('Avg Reply (You)', selectedDM1.median_response_time_sent_mins.toFixed(1) + ' min', selectedDM2.median_response_time_sent_mins.toFixed(1) + ' min')}
+      ${compareMetric('Avg Reply (Them)', selectedDM1.median_response_time_received_mins.toFixed(1) + ' min', selectedDM2.median_response_time_received_mins.toFixed(1) + ' min')}
+      ${selectedDM1.chemistry ? compareMetric('Chemistry', selectedDM1.chemistry.score, selectedDM2.chemistry?.score || '—') : ''}
+    </div>
+    <div class="compare-card glass-card">
+      <h3>${esc(selectedDM2.display_name)}</h3>
+    </div>
+  `;
+}

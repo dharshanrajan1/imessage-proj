@@ -4,6 +4,14 @@ import json
 import re
 from collections import defaultdict, Counter
 from datetime import datetime, timezone, date
+import time
+
+# Optional: sentiment analysis (graceful fallback if not installed)
+try:
+    from textblob import TextBlob
+    HAS_TEXTBLOB = True
+except ImportError:
+    HAS_TEXTBLOB = False
 
 MAC_EPOCH_OFFSET = 978307200
 
@@ -440,6 +448,21 @@ def chemistry_score(d):
     }
 
 
+def get_sentiment(text):
+    """Return sentiment polarity of text (0..1, where 0.5=neutral).
+
+    Uses TextBlob if available; otherwise returns 0.5 (neutral) for all text.
+    TextBlob polarity ranges -1..1; we normalize to 0..1.
+    """
+    if not HAS_TEXTBLOB or not text:
+        return 0.5
+    try:
+        polarity = TextBlob(str(text)).sentiment.polarity
+        return (polarity + 1) / 2
+    except Exception:
+        return 0.5
+
+
 def format_group_name(participant_handles, members_data, contacts, max_names=3):
     """Build a readable name for an unnamed group chat from its participants,
     e.g. 'Alice + Bob + Carol +2 more'. Names are ordered by how active each
@@ -488,7 +511,67 @@ def _close_streak(cdata, end_dt):
             "duration_hours": round(duration_hours, 2),
         }
 
-def run_analysis(contacts=None, start_date=None, end_date=None):
+def _load_checkpoint():
+    """Load the last parse timestamp from _parse_checkpoint.json, if present."""
+    checkpoint_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), '_parse_checkpoint.json')
+    if os.path.exists(checkpoint_path):
+        try:
+            with open(checkpoint_path, 'r') as f:
+                return json.load(f).get('last_timestamp')
+        except Exception:
+            return None
+    return None
+
+
+def _save_checkpoint(timestamp):
+    """Save the current parse timestamp for incremental runs."""
+    checkpoint_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), '_parse_checkpoint.json')
+    try:
+        with open(checkpoint_path, 'w') as f:
+            json.dump({'last_timestamp': timestamp}, f)
+    except Exception:
+        pass
+
+
+def _calculate_yoy_trends(dm_stats_by_year):
+    """Compare year-over-year metrics. dm_stats_by_year is {year: {...stats...}}."""
+    if len(dm_stats_by_year) < 2:
+        return {}
+    years = sorted(dm_stats_by_year.keys())
+    prev_year = dm_stats_by_year[years[-2]]
+    curr_year = dm_stats_by_year[years[-1]]
+
+    def delta(curr, prev, default=0):
+        if prev == 0 or prev is None:
+            return None
+        return round(((curr - prev) / prev) * 100, 1)
+
+    return {
+        "years": {"previous": years[-2], "current": years[-1]},
+        "total_messages": {
+            "previous": prev_year.get("total", 0),
+            "current": curr_year.get("total", 0),
+            "delta": delta(curr_year.get("total", 0), prev_year.get("total", 0))
+        },
+        "avg_message_length": {
+            "previous": round(prev_year.get("avg_msg_length", 0), 2),
+            "current": round(curr_year.get("avg_msg_length", 0), 2),
+            "delta": delta(curr_year.get("avg_msg_length", 0), prev_year.get("avg_msg_length", 0))
+        },
+        "lpm": {
+            "previous": round(prev_year.get("lpm", 0), 3),
+            "current": round(curr_year.get("lpm", 0), 3),
+            "delta": delta(curr_year.get("lpm", 0), prev_year.get("lpm", 0))
+        },
+        "sentiment": {
+            "previous": round(prev_year.get("sentiment_avg", 0.5), 2),
+            "current": round(curr_year.get("sentiment_avg", 0.5), 2),
+            "delta": delta(curr_year.get("sentiment_avg", 0.5), prev_year.get("sentiment_avg", 0.5))
+        },
+    }
+
+
+def run_analysis(contacts=None, start_date=None, end_date=None, incremental=False):
     """Run the full chat.db analysis.
 
     start_date / end_date are optional 'YYYY-MM-DD' strings (inclusive) used to
@@ -528,8 +611,14 @@ def run_analysis(contacts=None, start_date=None, end_date=None):
     except Exception as e:
         return {"error": str(e)}
 
+    # Incremental parsing: only fetch messages since the last checkpoint timestamp.
+    checkpoint_ns = _load_checkpoint() if incremental else None
+    query_where = "m.item_type = 0"
+    if checkpoint_ns:
+        query_where += f" AND m.date > {checkpoint_ns}"
+
     # Fetch messages
-    query = """
+    query = f"""
     SELECT
         m.ROWID as rowid, m.guid, m.text, m.attributedBody, m.is_from_me, m.date,
         m.associated_message_guid, m.associated_message_type,
@@ -538,12 +627,15 @@ def run_analysis(contacts=None, start_date=None, end_date=None):
     JOIN chat_message_join cmj ON m.ROWID = cmj.message_id
     JOIN chat c ON cmj.chat_id = c.ROWID
     LEFT JOIN handle h ON m.handle_id = h.ROWID
-    WHERE m.item_type = 0
+    WHERE {query_where}
     ORDER BY m.date ASC
     """
-    
+
     cur.execute(query)
     rows = cur.fetchall()
+
+    # Track the latest timestamp for the next checkpoint.
+    latest_msg_ns = rows[-1]['date'] if rows else int(time.time() * 1e9)
 
     # Attachment counts per message (photos/videos/files) for media stats.
     att_counts = {}
@@ -580,6 +672,8 @@ def run_analysis(contacts=None, start_date=None, end_date=None):
     g_total = 0
     g_sent = 0
     g_received = 0
+    g_sentiment_sum = 0.0
+    g_sentiment_count = 0
     g_hourly = [0]*24
     g_daily = [0]*7
     g_month_of_year = [0]*12  # Jan..Dec, aggregated across all years -- "peak season"
@@ -662,6 +756,10 @@ def run_analysis(contacts=None, start_date=None, end_date=None):
                 "pending_question": None,
                 "worst_ghost": {"delay_hours": 0, "ghoster": None, "asker": None,
                                  "question_preview": None, "question_date": None, "response_date": None},
+                # Sentiment tracking
+                "sentiment_sum": 0.0, "sentiment_count": 0,
+                # Year-over-year metrics per chat
+                "yearly_stats": defaultdict(lambda: {"total": 0, "word_sum": 0, "word_count": 0, "laugh_count": 0, "sentiment_sum": 0.0, "sentiment_count": 0}),
             }
         
         cdata = chats_data[chat_id]
@@ -756,9 +854,27 @@ def run_analysis(contacts=None, start_date=None, end_date=None):
         is_laugh = is_laugh_text(text)
         if is_laugh:
             mdata["laughs"] += 1
-            
+
+        # Sentiment analysis
+        sentiment = get_sentiment(text)
+        cdata["sentiment_sum"] += sentiment
+        cdata["sentiment_count"] += 1
+        g_sentiment_sum += sentiment
+        g_sentiment_count += 1
+        # Track YoY stats
+        year = dt.year
+        cdata["yearly_stats"][year]["total"] += 1
+        cdata["yearly_stats"][year]["sentiment_sum"] += sentiment
+        cdata["yearly_stats"][year]["sentiment_count"] += 1
+
         emojis = extract_emojis(text)
         words = clean_words(text)
+
+        # Track word counts for avg message length in yearly stats
+        cdata["yearly_stats"][year]["word_sum"] += len(words)
+        cdata["yearly_stats"][year]["word_count"] += len(words)
+        if is_laugh:
+            cdata["yearly_stats"][year]["laugh_count"] += 1
         
         g_emojis.update(emojis)
         g_words.update(words)
@@ -867,6 +983,7 @@ def run_analysis(contacts=None, start_date=None, end_date=None):
     def _new_type_agg():
         return {
             "total": 0, "sent": 0, "received": 0,
+            "sentiment_sum": 0.0, "sentiment_count": 0,
             "hourly": [0] * 24, "daily": [0] * 7,
             "monthly": Counter(),
             "reactions_sent": Counter(), "reactions_received": Counter(),
@@ -906,6 +1023,8 @@ def run_analysis(contacts=None, start_date=None, end_date=None):
         agg["total"] += total
         agg["sent"] += cdata["sent"]
         agg["received"] += cdata["received"]
+        agg["sentiment_sum"] += cdata["sentiment_sum"]
+        agg["sentiment_count"] += cdata["sentiment_count"]
         for i in range(24):
             agg["hourly"][i] += cdata["hourly_distribution"][i]
         for i in range(7):
@@ -1116,6 +1235,13 @@ def run_analysis(contacts=None, start_date=None, end_date=None):
             "received": cdata["received"],
             "laughs_sent": cdata["laughs_sent"],
             "laughs_received": cdata["laughs_received"],
+            "sentiment_avg": round(cdata["sentiment_sum"] / cdata["sentiment_count"], 2) if cdata["sentiment_count"] > 0 else 0.5,
+            "yearly_stats": _calculate_yoy_trends({y: {
+                "total": stats["total"],
+                "sentiment_avg": stats["sentiment_sum"] / stats["sentiment_count"] if stats["sentiment_count"] > 0 else 0.5,
+                "avg_msg_length": stats["word_sum"] / stats["word_count"] if stats["word_count"] > 0 else 0,
+                "lpm": stats["laugh_count"] / max(1, stats["total"]),
+            } for y, stats in cdata["yearly_stats"].items()}),
             "lpm_sent": round(cdata["laughs_sent"] / sent, 3),
             "lpm_recv": round(cdata["laughs_received"] / recv, 3),
             "double_texts_sent": cdata["double_texts_sent"],
@@ -1145,6 +1271,7 @@ def run_analysis(contacts=None, start_date=None, end_date=None):
             "total_messages": agg["total"],
             "sent": agg["sent"],
             "received": agg["received"],
+            "sentiment_avg": round(agg["sentiment_sum"] / agg["sentiment_count"], 2) if agg["sentiment_count"] > 0 else 0.5,
             "hourly_distribution": agg["hourly"],
             "daily_distribution": agg["daily"],
             "monthly_activity": dict(agg["monthly"]),
@@ -1243,6 +1370,10 @@ def run_analysis(contacts=None, start_date=None, end_date=None):
             "count": top_double_texter[0][1],
         } if top_double_texter and top_double_texter[0][1] > 0 else None,
     }
+
+    # Save checkpoint for incremental parsing
+    if latest_msg_ns:
+        _save_checkpoint(latest_msg_ns)
 
     return result
 
