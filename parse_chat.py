@@ -1,11 +1,11 @@
 import sqlite3
 import os
 import json
+import hashlib
 import math
 import re
 from collections import defaultdict, Counter
 from datetime import datetime, timezone, timedelta, date
-import time
 
 # Optional: sentiment analysis (graceful fallback if not installed)
 try:
@@ -257,14 +257,22 @@ def load_call_history():
     return calls
 
 
-def summarize_calls(call_list, chem_cutoff, chem_ref_dt):
+def summarize_calls(call_list, window_start, chem_ref_dt):
     """Aggregate one chat's calls into display stats + the chemistry input.
+
+    `window_start` is the *effective* start: the chemistry cutoff, or the start
+    of the user's requested date range when that is later. Both bounds have to
+    be honoured. Windowing only on the chemistry cutoff meant a five-day filter
+    still reported eighteen months of calls -- the message counts beside them
+    would shrink to the range while the call figures didn't move, and the
+    chemistry call bonus kept crediting phone time from outside the window
+    entirely.
 
     `decayed_minutes` uses the same exponential decay as message volume, so a
     call last week counts for more than one a year ago. Everything else is a
-    plain total over the chemistry window -- the UI never shows all-time call
-    figures, because the call db's ~2-year horizon would make them misleading
-    alongside all-time message counts.
+    plain total over the window -- the UI never shows all-time call figures,
+    because the call db's ~2-year horizon would make them misleading alongside
+    all-time message counts.
     """
     total_secs = 0.0
     count = 0
@@ -274,7 +282,7 @@ def summarize_calls(call_list, chem_cutoff, chem_ref_dt):
     last_dt = None
 
     for dt, duration, originated in call_list:
-        if dt < chem_cutoff or dt > chem_ref_dt:
+        if dt < window_start or dt > chem_ref_dt:
             continue
         count += 1
         total_secs += duration
@@ -410,35 +418,137 @@ def _expand_contractions(text):
     return _CONTRACTION_RE.sub(lambda m: CONTRACTIONS[m.group(0)], text)
 
 
-def clean_words(text):
+# Keep apostrophes inside tokens so any contraction the table missed ("that'll",
+# possessives like "mom's") stays whole instead of shattering into a meaningless
+# suffix ("ll", "s"); the stem is taken afterwards.
+_TOKEN_RE = re.compile(r"[a-z]+(?:'[a-z]+)*")
+
+
+def analyze_tokens(text):
+    """Tokenize once, return (all_tokens, content_words).
+
+    Two different vocabularies come out of the same text and they are *not*
+    interchangeable:
+
+      * all_tokens    -- every word, function words included. Style metrics
+                         (pronouns, hedging, absolutist language) live almost
+                         entirely in the words `clean_words()` throws away, so
+                         they need the unfiltered stream.
+      * content_words -- stopwords, filler and laughter removed; what "top
+                         words" and distinctiveness are computed over.
+
+    Tokenizing once and splitting the result keeps the per-message cost the same
+    as the old single-purpose pass.
+    """
     if not text:
-        return []
+        return [], []
     text = text.lower()
     text = _APOS_RE.sub("'", text)
     text = _URL_RE.sub(' ', text)
     text = _EMAIL_RE.sub(' ', text)
     text = _expand_contractions(text)
 
-    # Keep apostrophes inside tokens so any contraction the table missed
-    # ("that'll", possessives like "mom's") stays whole instead of shattering
-    # into a meaningless suffix ("ll", "s"); then keep only the stem.
-    words = re.findall(r"[a-z]+(?:'[a-z]+)*", text)
-    out = []
-    for w in words:
-        if "'" in w:
-            w = w.split("'", 1)[0]
-        if len(w) <= 1 or w in ALL_STOP_WORDS:
+    raw, content = [], []
+    for tok in _TOKEN_RE.findall(text):
+        if "'" in tok:
+            tok = tok.split("'", 1)[0]
+        if not tok:
             continue
-        if _LAUGH_RE.match(w):
+        raw.append(tok)
+        if len(tok) <= 1 or tok in ALL_STOP_WORDS:
+            continue
+        if _LAUGH_RE.match(tok):
             continue
         # Fully de-duplicate repeated letters ("soooo" -> "so") to catch elongated
         # filler, but only for the comparison -- keep the original spelling in output
         # so real double letters ("book", "letter") aren't corrupted.
-        deduped = _REPEAT_CHAR_RE.sub(r'\1', w)
-        if deduped in ALL_STOP_WORDS:
+        if _REPEAT_CHAR_RE.sub(r'\1', tok) in ALL_STOP_WORDS:
             continue
-        out.append(w)
-    return out
+        content.append(tok)
+    return raw, content
+
+
+def clean_words(text):
+    """Content words only -- the tokenizer's second return value."""
+    return analyze_tokens(text)[1]
+
+
+# ---- Style / function-word categories ----------------------------------------
+# LIWC-style categories counted over *all* tokens (function words included).
+# These measure how someone writes rather than what they write about, which is
+# why they're computed from analyze_tokens()'s raw stream: almost every word
+# here is a stopword that clean_words() deliberately drops.
+#
+# Categories overlap on purpose -- "never" is both absolutist and a negation,
+# "definitely" is both absolutist and certainty. They're separate lenses on the
+# same text, not a partition of it, so a token can score in more than one.
+STYLE_CATEGORIES = {
+    # Black-and-white framing. Elevated absolutist language is the single most
+    # replicated linguistic marker in the depression/anxiety literature.
+    "absolutist": {
+        'all', 'always', 'never', 'nothing', 'everything', 'everyone', 'nobody',
+        'completely', 'totally', 'absolutely', 'definitely', 'entirely', 'constantly',
+        'every', 'whole', 'full', 'forever', 'must', 'none', 'only', 'ever',
+    },
+    # Softening and uncertainty -- the opposite pole from certainty.
+    "hedging": {
+        'maybe', 'probably', 'might', 'guess', 'kinda', 'sorta', 'perhaps', 'possibly',
+        'somewhat', 'seems', 'seem', 'suppose', 'apparently', 'likely', 'unsure',
+        'think', 'thought', 'sort', 'kind', 'almost', 'pretty', 'bit', 'little',
+    },
+    "certainty": {
+        'definitely', 'certainly', 'sure', 'obviously', 'clearly', 'undoubtedly',
+        'exactly', 'absolutely', 'know', 'knew', 'true', 'truly', 'totally', 'always',
+        'never', 'fact', 'obvious',
+    },
+    # First-person singular: attention turned inward. Rises with distress and
+    # with self-disclosure.
+    "i_me": {'i', 'me', 'my', 'mine', 'myself'},
+    # First-person plural: shared framing, "us against the problem".
+    "we_us": {'we', 'us', 'our', 'ours', 'ourselves'},
+    "you_focus": {'you', 'your', 'yours', 'yourself', 'yourselves', 'u', 'ur'},
+    "negation": {
+        'not', 'no', 'never', 'none', 'cannot', 'nothing', 'nowhere', 'neither',
+        'nor', 'nobody', 'without',
+    },
+}
+
+# token -> tuple of category names it belongs to, so the per-message hot loop is
+# one dict lookup per token instead of one set membership test per category.
+_STYLE_INDEX = {}
+for _cat, _words in STYLE_CATEGORIES.items():
+    for _w in _words:
+        _STYLE_INDEX[_w] = _STYLE_INDEX.get(_w, ()) + (_cat,)
+
+
+def accumulate_style(tokens, counter):
+    """Tally style-category hits for one message's tokens into `counter`.
+
+    `_tokens` holds the denominator (every token seen), so rates come out as
+    "per 1000 words written" rather than per message -- otherwise anyone who
+    writes long messages looks more absolutist than someone who writes short
+    ones.
+    """
+    if not tokens:
+        return
+    counter["_tokens"] += len(tokens)
+    for tok in tokens:
+        cats = _STYLE_INDEX.get(tok)
+        if cats:
+            for c in cats:
+                counter[c] += 1
+
+
+def style_rates(counter):
+    """Convert raw style tallies into rates per 1000 tokens."""
+    total = counter.get("_tokens", 0)
+    if not total:
+        return None
+    return {
+        "tokens": total,
+        "rates": {cat: round(counter.get(cat, 0) * 1000 / total, 2)
+                  for cat in STYLE_CATEGORIES},
+    }
 
 
 REACTIONS_ADDED = {2000: 'love', 2001: 'like', 2002: 'dislike', 2003: 'laugh', 2004: 'emphasize', 2005: 'question', 2006: 'emoji'}
@@ -680,6 +790,136 @@ def _median(vals):
     return s[mid] if n % 2 else (s[mid - 1] + s[mid]) / 2
 
 
+def _percentile(vals, pct, presorted=False):
+    """Linear-interpolated percentile (0 if empty). `pct` is 0..100."""
+    if not vals:
+        return 0
+    s = vals if presorted else sorted(vals)
+    if len(s) == 1:
+        return s[0]
+    pos = (len(s) - 1) * (pct / 100.0)
+    lo = int(math.floor(pos))
+    hi = int(math.ceil(pos))
+    if lo == hi:
+        return s[lo]
+    return s[lo] + (s[hi] - s[lo]) * (pos - lo)
+
+
+# ---- Distinctive vocabulary ---------------------------------------------------
+# A word must appear at least this many times in a chat before it can be called
+# distinctive -- otherwise a single in-joke typed twice outranks everything.
+DISTINCT_MIN_COUNT = 5
+DISTINCT_TOP_N = 12
+# Below this many content words there isn't enough text to compare against the
+# baseline at all.
+DISTINCT_MIN_CORPUS = 300
+
+
+def distinctive_words(chat_counter, global_counter, min_count=DISTINCT_MIN_COUNT,
+                      top_n=DISTINCT_TOP_N):
+    """Words this chat uses at an outsized rate versus everyone else.
+
+    Implements the log-odds ratio with an informative Dirichlet prior (Monroe,
+    Colaresi & Quinn 2008). Two properties matter here and neither comes free
+    with simpler approaches:
+
+      * Raw frequency just returns the same stopword-ish vocabulary for every
+        chat. Comparing against a baseline is what makes a word *distinctive*
+        rather than merely common.
+      * A plain log-odds ratio is dominated by rare words -- one use of a word
+        nobody else says yields an enormous ratio. Using the global counts as a
+        Dirichlet prior shrinks exactly those estimates toward the baseline, and
+        dividing by the estimated standard deviation turns the result into a
+        z-score whose magnitude is comparable across words of any frequency.
+
+    The comparison corpus is everyone *else*: the global counter minus this
+    chat, so a very talkative chat isn't measured against a baseline it dominates.
+    """
+    n_i = sum(chat_counter.values())
+    n_all = sum(global_counter.values())
+    n_j = n_all - n_i
+    if n_i < DISTINCT_MIN_CORPUS or n_j <= 0:
+        return []
+
+    a0 = n_all  # prior strength = the background corpus size
+    scored = []
+    for w, y_i in chat_counter.items():
+        if y_i < min_count:
+            continue
+        a_w = global_counter.get(w, 0)
+        if not a_w:
+            continue
+        y_j = a_w - y_i  # this word's count everywhere else
+        if y_j < 0:
+            y_j = 0
+        num_i = y_i + a_w
+        num_j = y_j + a_w
+        den_i = n_i + a0 - num_i
+        den_j = n_j + a0 - num_j
+        if num_i <= 0 or num_j <= 0 or den_i <= 0 or den_j <= 0:
+            continue
+        delta = math.log(num_i / den_i) - math.log(num_j / den_j)
+        var = (1.0 / num_i) + (1.0 / num_j)
+        z = delta / math.sqrt(var)
+        if z > 0:
+            scored.append({"word": w, "z": round(z, 2), "count": y_i})
+    scored.sort(key=lambda d: d["z"], reverse=True)
+    return scored[:top_n]
+
+
+# ---- Silence anomalies --------------------------------------------------------
+# Gaps shorter than this are turn-taking inside a conversation, not a lull, and
+# folding them into the baseline would drag the median to a couple of minutes.
+LULL_FLOOR_HOURS = 1.0
+# A silence has to clear this in absolute terms before it's worth reporting, no
+# matter how chatty the relationship normally is.
+SILENCE_MIN_HOURS = 24.0
+# ...and it has to be an outlier for *this* relationship: at least this multiple
+# of its own typical lull.
+SILENCE_RATIO = 3.0
+# Fewer lulls than this and there's no rhythm to call anything an outlier against.
+SILENCE_MIN_SAMPLES = 12
+SILENCE_TOP_N = 5
+
+
+def detect_silences(lull_hours, lull_events):
+    """Find gaps that are anomalous for this relationship's own rhythm.
+
+    An absolute threshold ("more than a week") is the obvious approach and it's
+    the wrong one: it flags every dormant acquaintance and misses the friend you
+    normally talk to hourly going quiet for two days -- which is the one that
+    actually means something. So the bar is set from the chat's own distribution
+    (95th percentile and a multiple of the median), and the absolute floor only
+    exists to stop sub-day gaps being reported as silences at all.
+
+    Also reports who ended each silence. Who does the repairing is often the more
+    telling number: consistently being the one who comes back first is a
+    different relationship than taking turns.
+    """
+    if len(lull_hours) < SILENCE_MIN_SAMPLES or not lull_events:
+        return None
+    s = sorted(lull_hours)
+    typical = _median(s)
+    p95 = _percentile(s, 95, presorted=True)
+    threshold = max(p95, typical * SILENCE_RATIO, SILENCE_MIN_HOURS)
+
+    flagged = [e for e in lull_events if e["hours"] >= threshold]
+    if not flagged:
+        return None
+    flagged.sort(key=lambda e: e["hours"], reverse=True)
+
+    broke_me = sum(1 for e in flagged if e["broken_by"] == "me")
+    return {
+        "typical_lull_hours": round(typical, 2),
+        "p95_lull_hours": round(p95, 2),
+        "threshold_hours": round(threshold, 2),
+        "count": len(flagged),
+        "broken_by_me": broke_me,
+        "broken_by_them": len(flagged) - broke_me,
+        "events": flagged[:SILENCE_TOP_N],
+    }
+
+
 def _close_streak(cdata, end_dt):
     """Finalize the in-progress marathon streak and keep it if it's a new record."""
     if cdata["streak_start"] is None or cdata["streak_count"] < 2:
@@ -697,26 +937,95 @@ def _close_streak(cdata, end_dt):
             "first_sender": cdata["streak_first_sender"],
         }
 
-def _load_checkpoint():
-    """Load the last parse timestamp from _parse_checkpoint.json, if present."""
-    checkpoint_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), '_parse_checkpoint.json')
-    if os.path.exists(checkpoint_path):
-        try:
-            with open(checkpoint_path, 'r') as f:
-                return json.load(f).get('last_timestamp')
-        except Exception:
-            return None
-    return None
+# ---- Incremental work: the sentiment cache ------------------------------------
+# Sentiment scoring is ~60% of a full parse (TextBlob tags and scores every one
+# of half a million messages), and it is a *pure function of the message text* --
+# the same string always scores the same. That makes it the one part of the
+# pipeline that can be reused across runs without any risk of stale or partial
+# statistics, so it's the part that gets cached.
+#
+# Everything else is recomputed from scratch on every run. That is deliberate:
+# the aggregates are order-dependent and interlocking (streaks, reply times,
+# initiations, per-chat baselines), and a half-updated set of them is worse than
+# a slow correct one.
+#
+# The cache stores a *hash* of each message and its score -- never the text. A
+# plaintext mirror of chat.db sitting in the project directory would undo the
+# thing this project is for, and hashes are all a cache needs.
+_SENTIMENT_CACHE_FILE = '_sentiment_cache.json'
+# Cap so the file can't grow without bound as old messages age out of the DB.
+_SENTIMENT_CACHE_MAX = 1_500_000
+
+# Held at module scope so repeated run_analysis() calls in one process (the
+# server re-runs per date range) share it without re-reading the file.
+_sentiment_cache = None
+_sentiment_cache_dirty = False
 
 
-def _save_checkpoint(timestamp):
-    """Save the current parse timestamp for incremental runs."""
-    checkpoint_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), '_parse_checkpoint.json')
+def _sentiment_cache_path():
+    return os.path.join(os.path.dirname(os.path.abspath(__file__)), _SENTIMENT_CACHE_FILE)
+
+
+def _text_digest(text):
+    """Short, stable digest of a message. 64 bits -- at ~5x10^5 distinct messages
+    the odds of any collision at all are on the order of 10^-8."""
+    return hashlib.blake2b(text.encode('utf-8', 'replace'), digest_size=8).hexdigest()
+
+
+def load_sentiment_cache():
+    """Load (once per process) the text-digest -> polarity cache."""
+    global _sentiment_cache
+    if _sentiment_cache is not None:
+        return _sentiment_cache
+    _sentiment_cache = {}
+    # A cache written without TextBlob installed would be all nulls; ignore it
+    # rather than serve "no sentiment anywhere" forever after installing it.
+    if not HAS_TEXTBLOB:
+        return _sentiment_cache
     try:
-        with open(checkpoint_path, 'w') as f:
-            json.dump({'last_timestamp': timestamp}, f)
+        with open(_sentiment_cache_path(), 'r') as f:
+            data = json.load(f)
+        if isinstance(data, dict) and data.get("v") == 1:
+            _sentiment_cache = data.get("scores", {})
     except Exception:
         pass
+    return _sentiment_cache
+
+
+def save_sentiment_cache():
+    """Persist the cache if anything new was scored this run."""
+    global _sentiment_cache_dirty
+    if not _sentiment_cache_dirty or not _sentiment_cache or not HAS_TEXTBLOB:
+        return
+    cache = _sentiment_cache
+    if len(cache) > _SENTIMENT_CACHE_MAX:
+        # Nothing here is worth an LRU; dropping the tail is fine because a miss
+        # only costs a recompute.
+        cache = dict(list(cache.items())[:_SENTIMENT_CACHE_MAX])
+    try:
+        path = _sentiment_cache_path()
+        tmp = path + '.tmp'
+        with open(tmp, 'w') as f:
+            json.dump({"v": 1, "scores": cache}, f, separators=(',', ':'))
+        os.replace(tmp, path)  # atomic: never leave a half-written cache behind
+        _sentiment_cache_dirty = False
+    except Exception:
+        pass
+
+
+def get_sentiment_cached(text):
+    """get_sentiment() memoized on a digest of the text."""
+    global _sentiment_cache_dirty
+    if not HAS_TEXTBLOB or not text:
+        return None
+    cache = load_sentiment_cache()
+    key = _text_digest(text)
+    if key in cache:
+        return cache[key]  # may legitimately be None ("no lexicon signal")
+    val = get_sentiment(text)
+    cache[key] = val
+    _sentiment_cache_dirty = True
+    return val
 
 
 def _calculate_yoy_trends(dm_stats_by_year):
@@ -763,13 +1072,17 @@ def _calculate_yoy_trends(dm_stats_by_year):
     }
 
 
-def run_analysis(contacts=None, start_date=None, end_date=None, incremental=False, calls=None):
+def run_analysis(contacts=None, start_date=None, end_date=None, calls=None):
     """Run the full chat.db analysis.
 
     start_date / end_date are optional 'YYYY-MM-DD' strings (inclusive) used to
     restrict the analysis to a window of time -- handy for checking whether "top
     words" are being dominated by a recent burst of activity rather than reflecting
     the whole relationship history.
+
+    Every statistic is computed from the full row set each call. Only sentiment
+    is reused across runs, via a cache keyed on message digests -- see the
+    "Incremental work" section above for why that's the only safe thing to cache.
     """
     db_path = os.path.expanduser('~/Library/Messages/chat.db')
     if not os.path.exists(db_path):
@@ -807,14 +1120,10 @@ def run_analysis(contacts=None, start_date=None, end_date=None, incremental=Fals
     except Exception as e:
         return {"error": str(e)}
 
-    # Incremental parsing: only fetch messages since the last checkpoint timestamp.
-    checkpoint_ns = _load_checkpoint() if incremental else None
-    query_where = "m.item_type = 0"
-    if checkpoint_ns:
-        query_where += f" AND m.date > {checkpoint_ns}"
-
-    # Fetch messages
-    query = f"""
+    # Fetch messages. Always the full set: every aggregate below is
+    # order-dependent, so scoring only "new" rows would silently report a
+    # relationship's totals as whatever happened since the last run.
+    query = """
     SELECT
         m.ROWID as rowid, m.guid, m.text, m.attributedBody, m.is_from_me, m.date,
         m.associated_message_guid, m.associated_message_type,
@@ -823,15 +1132,12 @@ def run_analysis(contacts=None, start_date=None, end_date=None, incremental=Fals
     JOIN chat_message_join cmj ON m.ROWID = cmj.message_id
     JOIN chat c ON cmj.chat_id = c.ROWID
     LEFT JOIN handle h ON m.handle_id = h.ROWID
-    WHERE {query_where}
+    WHERE m.item_type = 0
     ORDER BY m.date ASC
     """
 
     cur.execute(query)
     rows = cur.fetchall()
-
-    # Track the latest timestamp for the next checkpoint.
-    latest_msg_ns = rows[-1]['date'] if rows else int(time.time() * 1e9)
 
     # Attachment counts per message (photos/videos/files) for media stats.
     att_counts = {}
@@ -872,6 +1178,11 @@ def run_analysis(contacts=None, start_date=None, end_date=None, incremental=Fals
         chem_ref_dt = end_dt
     chem_cutoff = chem_ref_dt - timedelta(days=CHEM_WINDOW_DAYS)
 
+    # Calls live in a separate database that the row-level date filter above
+    # never touches, so the requested range has to be applied to them here or
+    # they'd silently report outside it.
+    call_window_start = max(chem_cutoff, start_dt) if start_dt else chem_cutoff
+
     # Global state
     g_total = 0
     g_sent = 0
@@ -885,6 +1196,15 @@ def run_analysis(contacts=None, start_date=None, end_date=None, incremental=Fals
     g_reactions_received = Counter()
     g_emojis = Counter()
     g_words = Counter()
+    # Distinctiveness needs a *directional* baseline. Comparing what someone says
+    # against a pool that mixes your words with all 300-odd other people's would
+    # measure "unlike the average of everyone including me", which is not the
+    # question -- their words belong against other people's words, and yours
+    # against your own across every chat.
+    g_words_sent = Counter()
+    g_words_received = Counter()
+    g_style_sent = Counter()
+    g_style_received = Counter()
     g_monthly = Counter()      # 'YYYY-MM' -> count, for the all-time timeline
     g_day_counts = Counter()   # date ordinal -> count, for "busiest day ever"
     g_longest_msg = None       # longest single message ever sent or received
@@ -948,6 +1268,14 @@ def run_analysis(contacts=None, start_date=None, end_date=None, incremental=Fals
                 "reaction_matrix_raw": Counter(),
                 "response_times_sent": [],
                 "response_times_received": [],
+                # Style (function-word) tallies, one per direction.
+                "style_sent": Counter(), "style_received": Counter(),
+                # Silence detection. `lull_hours` is every gap over LULL_FLOOR_HOURS
+                # and forms this chat's own baseline; `lull_events` keeps the
+                # details only for gaps long enough to be worth reporting, so the
+                # baseline stays cheap on a half-million messages.
+                "lull_hours": [],
+                "lull_events": [],
                 # Marathon Chat: longest run of messages with no gap > MARATHON_GAP_SECONDS
                 "streak_start": None,
                 "streak_count": 0,
@@ -1090,7 +1418,7 @@ def run_analysis(contacts=None, start_date=None, end_date=None, incremental=Fals
 
         # Sentiment analysis. None means "nothing to measure" -- those messages
         # are left out of the average entirely rather than counted as neutral.
-        sentiment = get_sentiment(text)
+        sentiment = get_sentiment_cached(text)
         if sentiment is not None:
             cdata["sentiment_sum"] += sentiment
             cdata["sentiment_count"] += 1
@@ -1104,7 +1432,7 @@ def run_analysis(contacts=None, start_date=None, end_date=None, incremental=Fals
             cdata["yearly_stats"][year]["sentiment_count"] += 1
 
         emojis = extract_emojis(text)
-        words = clean_words(text)
+        raw_tokens, words = analyze_tokens(text)
 
         # Average message length: raw words summed over messages. Two things to
         # keep straight here --
@@ -1129,6 +1457,22 @@ def run_analysis(contacts=None, start_date=None, end_date=None, incremental=Fals
         if chat_id in chat_last_msg_time:
             time_diff = (dt - chat_last_msg_time[chat_id]).total_seconds()
             last_sender = chat_last_sender[chat_id]
+
+            # Silence tracking. The gap is already computed for the marathon and
+            # initiation logic below, so building the lull distribution costs an
+            # append rather than a second pass over the timeline.
+            gap_hours = time_diff / 3600
+            if gap_hours >= LULL_FLOOR_HOURS:
+                cdata["lull_hours"].append(gap_hours)
+                if gap_hours >= SILENCE_MIN_HOURS:
+                    cdata["lull_events"].append({
+                        "hours": round(gap_hours, 1),
+                        "start": chat_last_msg_time[chat_id].isoformat(),
+                        "end": dt.isoformat(),
+                        # Who spoke first after the silence -- resolved to a name
+                        # after the loop, where the contact map is applied.
+                        "broken_by": sender_id,
+                    })
 
             # Marathon Chat: extend or close the current streak
             if time_diff <= MARATHON_GAP_SECONDS:
@@ -1217,6 +1561,9 @@ def run_analysis(contacts=None, start_date=None, end_date=None, incremental=Fals
                 if is_laugh: cdata["chem"]["laughs_sent"] += 1
             cdata["top_emojis_sent"].update(emojis)
             cdata["top_words_sent"].update(words)
+            g_words_sent.update(words)
+            accumulate_style(raw_tokens, cdata["style_sent"])
+            accumulate_style(raw_tokens, g_style_sent)
         else:
             g_received += 1
             cdata["received"] += 1
@@ -1226,6 +1573,9 @@ def run_analysis(contacts=None, start_date=None, end_date=None, incremental=Fals
                 if is_laugh: cdata["chem"]["laughs_received"] += 1
             cdata["top_emojis_received"].update(emojis)
             cdata["top_words_received"].update(words)
+            g_words_received.update(words)
+            accumulate_style(raw_tokens, cdata["style_received"])
+            accumulate_style(raw_tokens, g_style_received)
 
     conn.close()
 
@@ -1233,6 +1583,13 @@ def run_analysis(contacts=None, start_date=None, end_date=None, incremental=Fals
     result = {
         "date_bounds": date_bounds,
         "applied_filter": {"start_date": start_date, "end_date": end_date},
+        # The window call figures actually cover, so the UI can label them
+        # honestly instead of hard-coding "18mo" regardless of the filter.
+        "call_window": {
+            "start": call_window_start.date().isoformat(),
+            "end": chem_ref_dt.date().isoformat(),
+            "days": max(1, (chem_ref_dt - call_window_start).days),
+        },
         "global_stats": {
             "total_messages": g_total,
             "sent": g_sent,
@@ -1243,7 +1600,11 @@ def run_analysis(contacts=None, start_date=None, end_date=None, incremental=Fals
             "reactions_sent": dict(g_reactions_sent),
             "reactions_received": dict(g_reactions_received),
             "top_emojis": g_emojis.most_common(10),
-            "top_words": g_words.most_common(10)
+            "top_words": g_words.most_common(10),
+            # Your own writing style across everything, and everyone else's --
+            # the baseline any single chat's style is only meaningful against.
+            "style_sent": style_rates(g_style_sent),
+            "style_received": style_rates(g_style_received),
         },
         "chats": []
     }
@@ -1452,6 +1813,13 @@ def run_analysis(contacts=None, start_date=None, end_date=None, incremental=Fals
             init_total = cdata["initiations_sent"] + cdata["initiations_received"]
             dstats = {
                 "name": resolved_chat_name,
+                # Lets the relative-baseline pass below find this chat's output
+                # entry again once every DM has been measured.
+                "chat_identifier": cdata["chat_identifier"],
+                # Tapback rates, each normalized by the *other* side's message
+                # count -- "reactions I gave per message they sent".
+                "rxn_given_rate": sum(cdata["reactions_sent"].values()) / recv,
+                "rxn_recv_rate": sum(cdata["reactions_received"].values()) / sent,
                 "total": total,
                 "sent": cdata["sent"],
                 "received": cdata["received"],
@@ -1480,7 +1848,7 @@ def run_analysis(contacts=None, start_date=None, end_date=None, incremental=Fals
             # Calls share the chemistry window, so the same summary feeds both
             # the score and the per-chat display.
             call_summary = summarize_calls(calls.get(cdata["chat_identifier"], []),
-                                           chem_cutoff, chem_ref_dt)
+                                           call_window_start, chem_ref_dt)
             w_total = ch["sent"] + ch["received"]
             if w_total >= 20:
                 w_sent = ch["sent"] or 1
@@ -1523,11 +1891,35 @@ def run_analysis(contacts=None, start_date=None, end_date=None, incremental=Fals
                     "sent": cdata["sent"], "received": cdata["received"], "total": total,
                 }
 
+        # ---- Deep read: style, distinctiveness, silences ----------------------
+        # Distinctiveness compares like with like: my words in this chat against
+        # my words everywhere, theirs against everyone else's.
+        distinctive = {
+            "sent": distinctive_words(cdata["top_words_sent"], g_words_sent),
+            "received": distinctive_words(cdata["top_words_received"], g_words_received),
+        }
+        style = {
+            "sent": style_rates(cdata["style_sent"]),
+            "received": style_rates(cdata["style_received"]),
+        }
+        silences = detect_silences(cdata["lull_hours"], cdata["lull_events"])
+        if silences:
+            # Resolve handles to names now that the contact map is in scope.
+            for ev in silences["events"]:
+                ev["broken_by"] = ("You" if ev["broken_by"] == "me"
+                                   else resolve_handle(ev["broken_by"], contacts))
+
         result["chats"].append({
             "chat_identifier": cdata["chat_identifier"],
             "display_name": resolved_chat_name,
             "is_group_chat": is_group_chat,
             "chemistry": chem,
+            "distinctive_words": distinctive,
+            "style": style,
+            "silences": silences,
+            # Filled in after the loop, once every DM has been seen and the
+            # cross-chat medians are known.
+            "relative": None,
             # Connected calls inside the chemistry window. `decayed_minutes` is a
             # scoring intermediate, not something the UI should show.
             "calls": {k: v for k, v in call_summary.items() if k != "decayed_minutes"}
@@ -1603,6 +1995,75 @@ def run_analysis(contacts=None, start_date=None, end_date=None, incremental=Fals
                 "calls": chat_entry["calls"],
                 **scored,
             })
+
+    # ---- Relative baselines across relationships ------------------------------
+    # A per-chat number in isolation ("median reply 4 minutes") is nearly
+    # uninterpretable -- fast compared to what? Ranking each chat against the
+    # same metric in every other DM turns it into a statement that means
+    # something: "the 3rd fastest of your 41 conversations, against a typical 19
+    # minutes". Everything here is arithmetic over dm_stats, which is already
+    # built; no extra pass over messages.
+    #
+    # Each spec: (output key, value function, eligibility test, whether a *low*
+    # raw value is the notable end, human label).
+    RELATIVE_SPECS = [
+        ("my_reply_time", lambda d: d["rt_sent"],
+         lambda d: d["rt_sent_samples"] >= 10 and d["rt_sent"] > 0, True,
+         "how fast you reply here"),
+        ("their_reply_time", lambda d: d["rt_recv"],
+         lambda d: d["rt_recv_samples"] >= 10 and d["rt_recv"] > 0, True,
+         "how fast they reply to you"),
+        ("my_initiation_share", lambda d: d["init_sent_share"],
+         lambda d: d["init_total"] >= 10, False,
+         "share of conversations you start"),
+        ("they_make_you_laugh", lambda d: d["lpm_sent"],
+         lambda d: d["total"] >= 50, False,
+         "laughs per message they send"),
+        ("you_make_them_laugh", lambda d: d["lpm_recv"],
+         lambda d: d["total"] >= 50, False,
+         "laughs per message you send"),
+        ("your_tapback_rate", lambda d: d["rxn_given_rate"],
+         lambda d: d["total"] >= 50, False,
+         "tapbacks you give them"),
+        ("their_tapback_rate", lambda d: d["rxn_recv_rate"],
+         lambda d: d["total"] >= 50, False,
+         "tapbacks they give you"),
+        # Value is the *skew*, so rank 1 is the most evenly split chat.
+        ("balance", lambda d: d["balance_skew"],
+         lambda d: d["total"] >= 50, True,
+         "how lopsided the talking is"),
+    ]
+
+    chat_entry_by_id = {c["chat_identifier"]: c for c in result["chats"]}
+    relative_by_chat = defaultdict(dict)
+    for key, valfn, eligible, low_is_notable, label in RELATIVE_SPECS:
+        pool = [d for d in dm_stats if eligible(d)]
+        # Two chats can't rank against each other meaningfully; below this a
+        # "rank 2 of 3" reads as precision that isn't there.
+        if len(pool) < 5:
+            continue
+        ranked = sorted(pool, key=valfn, reverse=not low_is_notable)
+        median_val = _median([valfn(d) for d in pool])
+        n = len(ranked)
+        for i, d in enumerate(ranked):
+            val = valfn(d)
+            relative_by_chat[d["chat_identifier"]][key] = {
+                "value": round(val, 3),
+                "rank": i + 1,
+                "of": n,
+                # 100 = most notable end of the scale for this metric.
+                "percentile": round((n - i) / n * 100),
+                "median_across_dms": round(median_val, 3),
+                # How this chat compares to your typical relationship. Guarded
+                # because a median of 0 (e.g. nobody tapbacks) is possible.
+                "ratio_to_median": round(val / median_val, 2) if median_val else None,
+                "label": label,
+            }
+
+    for cid, rel in relative_by_chat.items():
+        entry = chat_entry_by_id.get(cid)
+        if entry:
+            entry["relative"] = rel
 
     # Sort chats by last message date descending (most recent first)
     result["chats"].sort(key=lambda x: x["last_message_date"], reverse=True)
@@ -1746,9 +2207,9 @@ def run_analysis(contacts=None, start_date=None, end_date=None, incremental=Fals
         } if top_double_texter and top_double_texter[0][1] > 0 else None,
     }
 
-    # Save checkpoint for incremental parsing
-    if latest_msg_ns:
-        _save_checkpoint(latest_msg_ns)
+    # Persist any newly-scored sentiment so the next run (and the next date-range
+    # change) skips the most expensive stage.
+    save_sentiment_cache()
 
     return result
 

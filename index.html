@@ -3,314 +3,127 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="color-scheme" content="light dark">
   <title>iMessage Wrapped</title>
-  <link rel="preconnect" href="https://fonts.googleapis.com">
-  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+  <!-- Applied before first paint so a manually-chosen theme never flashes the
+       system one on the way in. Inline by necessity: an external file would be
+       fetched after the parser has already painted. -->
+  <script>
+    (function () {
+      var saved = localStorage.getItem('theme');
+      if (saved === 'light' || saved === 'dark') {
+        document.documentElement.setAttribute('data-theme', saved);
+      }
+    })();
+  </script>
   <link rel="stylesheet" href="styles.css">
   <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
 </head>
 <body>
-  <div class="glass-bg"></div>
-  <div class="dashboard-container">
-    <aside class="sidebar glass-card">
-      <div class="sidebar-header">
-        <h2>Chat Logs</h2>
-        <input type="text" id="chatSearch" placeholder="Search contacts...">
+  <div class="app">
+
+    <!-- ================= Toolbar ================= -->
+    <header class="toolbar material-glass">
+      <button class="sidebar-toggle" id="sidebarToggle" aria-label="Show conversations" aria-expanded="false" aria-controls="sidebar">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true">
+          <path d="M4 7h16M4 12h16M4 17h16"/>
+        </svg>
+      </button>
+
+      <span class="toolbar-brand">iMessage Wrapped</span>
+
+      <span class="toolbar-spacer"></span>
+
+      <div class="toolbar-filters">
+        <!-- Filters live in the toolbar because they apply to everything below
+             it, in every scope. Placing a control next to what it affects is
+             the whole reason the scope picker is in the sidebar and these
+             are not. -->
+        <div class="select-wrap">
+          <label class="visually-hidden" for="dateRangeSelect">Time range</label>
+          <select id="dateRangeSelect" class="control">
+            <option value="all">All time</option>
+            <option value="1y">Last year</option>
+            <option value="6m">Last 6 months</option>
+            <option value="3m">Last 3 months</option>
+            <option value="30d">Last 30 days</option>
+            <option value="custom">Custom range…</option>
+          </select>
+        </div>
+
+        <div id="customDateRange" class="toolbar-filters" hidden>
+          <label class="visually-hidden" for="startDateInput">Start date</label>
+          <input type="date" id="startDateInput" class="control">
+          <label class="visually-hidden" for="endDateInput">End date</label>
+          <input type="date" id="endDateInput" class="control">
+          <button id="applyDateRange" class="control">Apply</button>
+        </div>
+
+        <div class="segmented" id="chatTypeToggle" role="group" aria-label="Conversation type">
+          <button type="button" data-type="all" aria-pressed="true">All</button>
+          <button type="button" data-type="dm" aria-pressed="false">DMs</button>
+          <button type="button" data-type="group" aria-pressed="false">Groups</button>
+        </div>
+
+        <button class="theme-toggle" id="themeToggle" aria-label="Switch appearance" title="Switch appearance">
+          <svg id="themeIconLight" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" aria-hidden="true">
+            <circle cx="12" cy="12" r="4.2"/>
+            <path d="M12 2.5v2M12 19.5v2M2.5 12h2M19.5 12h2M5.2 5.2l1.4 1.4M17.4 17.4l1.4 1.4M18.8 5.2l-1.4 1.4M6.6 17.4l-1.4 1.4"/>
+          </svg>
+          <svg id="themeIconDark" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" hidden>
+            <path d="M20 14.5A8.2 8.2 0 0 1 9.5 4 8.3 8.3 0 1 0 20 14.5z"/>
+          </svg>
+        </button>
       </div>
-      <div class="chat-list" id="chatList" role="list"></div>
-    </aside>
+    </header>
 
-    <main class="main-content">
-      <header class="main-header glass-card">
-        <div>
-          <h1>iMessage Wrapped</h1>
-          <p class="subtitle" id="mainSubtitle">Your texting habits, visualized</p>
-        </div>
-        <div class="header-controls">
-          <div class="filter-group">
-            <label for="dateRangeSelect">Time Range</label>
-            <select id="dateRangeSelect">
-              <option value="all">All Time</option>
-              <option value="1y">Last Year</option>
-              <option value="6m">Last 6 Months</option>
-              <option value="3m">Last 3 Months</option>
-              <option value="30d">Last 30 Days</option>
-              <option value="custom">Custom Range…</option>
-            </select>
-          </div>
-          <div id="customDateRange" class="custom-date-range hidden">
-            <input type="date" id="startDateInput">
-            <span>to</span>
-            <input type="date" id="endDateInput">
-            <button id="applyDateRange" class="btn-apply">Apply</button>
-          </div>
-          <div class="filter-group">
-            <label>Chat Type</label>
-            <div class="segmented-toggle" id="chatTypeToggle">
-              <button class="segment active" data-type="all">All</button>
-              <button class="segment" data-type="dm">DMs</button>
-              <button class="segment" data-type="group">Group Chats</button>
-            </div>
-          </div>
-        </div>
-      </header>
-      <p id="filterSummary" class="filter-summary hidden"></p>
+    <!-- ================= Sidebar: the single navigator =================
 
-      <div id="loadingState" class="loading-state">
-        <div class="spinner"></div>
-        <p>Loading your data...</p>
+         Everything to the right of this is a view of whatever is selected
+         here. "Everyone" is a scope like any other and therefore an ordinary
+         row in the same list -- things that behave the same must look the
+         same and live in the same place.
+    ================================================================== -->
+    <div class="sidebar-scrim" id="sidebarScrim"></div>
+
+    <nav class="sidebar material-glass" id="sidebar" aria-label="Conversations">
+      <div class="sidebar-search">
+        <label class="visually-hidden" for="chatSearch">Search conversations</label>
+        <input type="text" id="chatSearch" class="control" placeholder="Search" autocomplete="off" spellcheck="false">
+      </div>
+      <div class="sidebar-scroll" id="scopeList"></div>
+    </nav>
+
+    <!-- ================= Content ================= -->
+    <main class="content">
+      <div class="scope-header">
+        <h1 class="scope-title" id="scopeTitle">Everyone</h1>
+        <p class="scope-sub" id="scopeSub"></p>
+
+        <div class="tabbar" id="tabBar" role="tablist" aria-label="Views">
+          <span class="tab-indicator" id="tabIndicator" aria-hidden="true"></span>
+        </div>
       </div>
 
-      <div id="statsDashboard" class="stats-dashboard hidden">
-        <nav class="tabs glass-card" role="tablist" aria-label="Dashboard sections">
-          <button class="tab-btn active" role="tab" aria-selected="true" aria-controls="overviewTab" data-tab="overviewTab">Overview</button>
-          <button class="tab-btn" role="tab" aria-selected="false" aria-controls="chatTab" data-tab="chatTab">Chat Analysis</button>
-          <button class="tab-btn" role="tab" aria-selected="false" aria-controls="membersTab" data-tab="membersTab" id="membersTabBtn" disabled title="Select a group chat to see its members">Members</button>
-          <button class="tab-btn" role="tab" aria-selected="false" aria-controls="insightsTab" data-tab="insightsTab">Insights</button>
-        </nav>
-
-        <div class="tab-content active" id="overviewTab">
-          <div class="section-heading">
-            <h2>🏆 All-Time Records</h2>
-            <p class="section-subtitle">Fun facts pulled from your whole texting history (or whatever time range you've selected above).</p>
-          </div>
-          <div class="award-grid" id="globalRecordsGrid"></div>
-
-          <div class="section-heading">
-            <h2>🧪 Chemistry — How You Mesh, Ranked</h2>
-            <p class="section-subtitle">Every one-on-one chat gets a 0–100 score from <em>the last 18 months only</em> — older history doesn't count. It blends how much and how regularly you actually talk (recent weeks count most) with how <em>mutual</em> it is when you do: balanced back-and-forth, fast replies both ways, shared conversation-starting, and the reactions/laughs you trade. Ranked best to worst.</p>
-          </div>
-          <div class="chemistry-grid" id="chemistryGrid"></div>
-          <div class="chemistry-rest" id="chemistryRest"></div>
-
-          <div class="section-heading">
-            <h2>📊 Leaderboards</h2>
-            <p class="section-subtitle">The top 5 in each category across all your one-on-one chats.</p>
-          </div>
-          <div class="leaderboard-grid" id="dmLeaderboardsGrid"></div>
-
-          <div class="section-heading">
-            <h2>💬 DM Superlatives</h2>
-            <p class="section-subtitle">Awards handed out across all your one-on-one conversations.</p>
-          </div>
-          <div class="award-grid" id="dmAwardsGrid"></div>
-
-          <div class="metrics-grid">
-            <div class="metric-card glass-card">
-              <h3>Total Messages</h3>
-              <p id="globalTotalMsg" class="metric-value">0</p>
-            </div>
-            <div class="metric-card glass-card">
-              <h3>Sent</h3>
-              <p id="globalSentMsg" class="metric-value">0</p>
-            </div>
-            <div class="metric-card glass-card">
-              <h3>Received</h3>
-              <p id="globalRecvMsg" class="metric-value">0</p>
-            </div>
-            <div class="metric-card glass-card">
-              <h3>Sent Ratio</h3>
-              <p id="globalSentRatio" class="metric-value">0%</p>
-            </div>
-          </div>
-          
-          <div class="charts-grid">
-            <div class="chart-card glass-card span-2">
-              <h3>Messages Over Time</h3>
-              <canvas id="globalMonthlyChart"></canvas>
-            </div>
-            <div class="chart-card glass-card">
-              <h3>Day of Week</h3>
-              <canvas id="globalDailyChart"></canvas>
-            </div>
-            <div class="chart-card glass-card span-2">
-              <h3>Hourly Activity</h3>
-              <canvas id="globalHourlyChart"></canvas>
-            </div>
-            <div class="chart-card glass-card">
-              <h3>Reactions</h3>
-              <canvas id="globalReactionsChart"></canvas>
-            </div>
-            <div class="chart-card glass-card">
-              <h3>Top Words</h3>
-              <ul id="globalTopWords" class="list-container"></ul>
-            </div>
-            <div class="chart-card glass-card">
-              <h3>Top Emojis</h3>
-              <div id="globalTopEmojis" class="emoji-grid"></div>
-            </div>
-          </div>
+      <div class="content-scroll" id="contentScroll">
+        <div id="loadingState" class="state">
+          <div class="spinner" aria-hidden="true"></div>
+          <p>Reading your messages…</p>
         </div>
 
-        <div class="tab-content" id="chatTab">
-          <div class="chat-header glass-card">
-            <h2 id="chatName">Select a Chat</h2>
-            <p id="chatIdentifier"></p>
-          </div>
-          <div class="metrics-grid">
-            <div class="metric-card glass-card">
-              <h3>Total Messages</h3>
-              <p id="chatTotalMsg" class="metric-value">0</p>
-            </div>
-            <div class="metric-card glass-card">
-              <h3>Chemistry</h3>
-              <p id="chatChemistry" class="metric-value">—</p>
-            </div>
-            <div class="metric-card glass-card">
-              <h3>Laughs per Message</h3>
-              <p id="chatLpm" class="metric-value">0 / 0</p>
-            </div>
-            <div class="metric-card glass-card">
-              <h3>Double Texts</h3>
-              <p id="chatDoubleTexts" class="metric-value">0 / 0</p>
-            </div>
-            <div class="metric-card glass-card">
-              <h3>Typical Reply</h3>
-              <p id="chatResponse" class="metric-value">0 / 0</p>
-            </div>
-            <div class="metric-card glass-card">
-              <h3>Words per Message</h3>
-              <p id="chatWords" class="metric-value">0 / 0</p>
-            </div>
-            <div class="metric-card glass-card">
-              <h3>Media Shared</h3>
-              <p id="chatMedia" class="metric-value">0 / 0</p>
-            </div>
-            <div class="metric-card glass-card">
-              <h3>Call Time (18mo)</h3>
-              <p id="chatCalls" class="metric-value">—</p>
-            </div>
-          </div>
-
-          <div class="award-grid" id="chatRecordsGrid"></div>
-
-          <div class="charts-grid">
-            <div class="chart-card glass-card span-2">
-              <h3>Monthly Activity</h3>
-              <canvas id="chatMonthlyChart"></canvas>
-            </div>
-            <div class="chart-card glass-card">
-              <h3>Conversational Balance</h3>
-              <canvas id="chatBalanceChart"></canvas>
-            </div>
-            <div class="chart-card glass-card span-2">
-              <h3>Hourly Activity</h3>
-              <canvas id="chatHourlyChart"></canvas>
-            </div>
-            <div class="chart-card glass-card">
-              <h3>Initiations</h3>
-              <canvas id="chatInitiationsChart"></canvas>
-            </div>
-            <div class="chart-card glass-card">
-              <h3>Top Emojis Comparison</h3>
-              <div class="comparison-grid" id="chatEmojisComparison"></div>
-            </div>
-            <div class="chart-card glass-card">
-              <h3>Top Words Comparison</h3>
-              <div class="comparison-grid" id="chatWordsComparison"></div>
-            </div>
-          </div>
+        <div id="errorState" class="state" hidden>
+          <h2 class="state-title">Couldn't load your data</h2>
+          <p class="error-note" id="errorMessage"></p>
         </div>
 
-        <div class="tab-content" id="membersTab">
-          <div class="chart-card glass-card">
-            <h3>Message Leaderboard</h3>
-            <div class="table-responsive">
-              <table class="leaderboard-table" id="leaderboardTable">
-                <thead>
-                  <tr>
-                    <th>Rank</th>
-                    <th data-sort="handle">Member</th>
-                    <th data-sort="message_count">Messages</th>
-                    <th data-sort="message_share_pct">Share %</th>
-                    <th data-sort="reactions_received">Reactions Received</th>
-                    <th data-sort="main_character_score" title="A blended score of message volume, reactions received, and conversations started">MC Score</th>
-                  </tr>
-                </thead>
-                <tbody id="leaderboardBody"></tbody>
-              </table>
-            </div>
-          </div>
-
-          <div class="award-grid" id="awardGrid">
-             <!-- Populated via JS -->
-          </div>
-
-          <div class="charts-grid">
-            <div class="chart-card glass-card span-2">
-              <h3>Who Reacts to Who</h3>
-              <ul id="reactionAffinityList" class="affinity-list"></ul>
-            </div>
-            <div class="chart-card glass-card">
-              <h3>Message Share</h3>
-              <canvas id="memberShareChart"></canvas>
-            </div>
-          </div>
-        </div>
-
-        <div class="tab-content" id="insightsTab">
-          <div class="insights-tabs glass-card" role="tablist" aria-label="Insight views">
-            <button class="insights-tab-btn active" role="tab" aria-selected="true" data-insight="trends">Trends</button>
-            <button class="insights-tab-btn" role="tab" aria-selected="false" data-insight="compare">Compare</button>
-            <button class="insights-tab-btn" role="tab" aria-selected="false" data-insight="sentiment">Sentiment</button>
-          </div>
-
-          <div class="insight-content active" id="trendsContent">
-            <div class="section-heading">
-              <h2>Year-over-Year Trends</h2>
-              <p class="section-scope">One conversation at a time</p>
-              <p class="section-subtitle" id="trendsSubtitle">Pick a conversation to see how it has evolved across years.</p>
-            </div>
-            <div class="single-control">
-              <div class="compare-select">
-                <label>Conversation</label>
-                <input type="text" id="trendsChatInput" placeholder="Search contact..." autocomplete="off">
-                <ul id="trendsChatList" class="contact-dropdown hidden"></ul>
-              </div>
-            </div>
-            <div id="trendsGrid" class="trends-grid"></div>
-          </div>
-
-          <div class="insight-content" id="compareContent">
-            <div class="section-heading">
-              <h2>Compare Two DMs</h2>
-              <p class="section-scope">Two conversations, side by side</p>
-              <p class="section-subtitle">Pick any two DMs below — independent of what's selected in the sidebar.</p>
-            </div>
-            <div class="comparison-controls">
-              <div class="compare-select">
-                <label>DM #1</label>
-                <input type="text" id="compareDM1Input" placeholder="Search contact..." autocomplete="off">
-                <ul id="compareDM1List" class="contact-dropdown hidden"></ul>
-              </div>
-              <div class="compare-select">
-                <label>DM #2</label>
-                <input type="text" id="compareDM2Input" placeholder="Search contact..." autocomplete="off">
-                <ul id="compareDM2List" class="contact-dropdown hidden"></ul>
-              </div>
-            </div>
-            <div id="comparisonResults" class="comparison-results hidden"></div>
-          </div>
-
-          <div class="insight-content" id="sentimentContent">
-            <div class="section-heading">
-              <h2>Sentiment Analysis</h2>
-              <p class="section-scope">All DMs</p>
-              <p class="section-subtitle">Mood and tone across every conversation (0 = negative, 1 = positive). Only messages carrying a recognisable sentiment word are scored, and only chats with 20+ such messages are listed.</p>
-            </div>
-            <div class="metrics-grid">
-              <div class="metric-card glass-card">
-                <h3>Global Sentiment</h3>
-                <p id="globalSentiment" class="metric-value">0.5</p>
-              </div>
-            </div>
-            <div id="sentimentGrid" class="sentiment-grid"></div>
-          </div>
-        </div>
+        <!-- Views are created and torn down by app.js against the current
+             scope, so there is never a tab that leads somewhere empty. -->
+        <div id="viewHost" hidden></div>
       </div>
     </main>
+
   </div>
-  <script src="app.js"></script>
+
+  <script type="module" src="app.js"></script>
 </body>
 </html>
