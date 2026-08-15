@@ -1,0 +1,44 @@
+name: CI
+
+# Syntax-only checks. This project reads a private chat.db that exists solely on
+# the author's Mac, so there is nothing here that CI can meaningfully run --
+# no test suite, no fixtures, and nothing safe to commit that would create any.
+# What it does catch is the failure this repo is actually exposed to: a typo
+# reaching main in a file nobody re-ran before pushing.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  syntax:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.x'
+
+      - name: Compile Python sources
+        run: python -m py_compile parse_chat.py server.py debug_contacts.py
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      # The frontend is ES modules in .js files, and `node --check` on such a
+      # file exits 0 even when the file has a syntax error -- the import makes
+      # the module kind ambiguous and the parse is skipped. Checking a .mjs copy
+      # forces module parsing, which fails correctly on bad syntax. Verified in
+      # both directions before this workflow was written; do not "simplify" this
+      # back to `node --check app.js`, which silently passes anything.
+      - name: Parse frontend ES modules
+        run: |
+          set -euo pipefail
+          for f in app.js motion.js; do
+            cp "$f" "/tmp/${f%.js}.mjs"
+            node --check "/tmp/${f%.js}.mjs"
+            echo "ok: $f"
+          done

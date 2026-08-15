@@ -1,6 +1,11 @@
 # Generated analytics output — contains real parsed iMessage data
 output.json
 
+# Sentiment cache: message digests -> scores. No message text, but it's local
+# derived data with no reason to be in the repo.
+_sentiment_cache.json
+_sentiment_cache.json.tmp
+
 # Manual contact-name overrides (may contain real names/numbers)
 contacts.json
 
